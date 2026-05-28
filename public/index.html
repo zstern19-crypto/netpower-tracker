@@ -482,7 +482,7 @@ function callAPI(b64,mime){
     ?{type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}}
     :{type:"image",source:{type:"base64",media_type:safeMime,data:b64}};
   var prompt="You are reading an electrical supplier invoice. Read ALL pages. Return ONLY a raw JSON array:\n[\n  {\n    \"supplier\": \"name or Unknown\",\n    \"invoice_date\": \"YYYY-MM-DD or "+todayISO()+"\",\n    \"invoice_number\": \"number or null\",\n    \"ship_to\": \"SHIP-TO/JOB SITE address one line or null\",\n    \"items\": [{\"name\":\"max 40 chars\",\"qty\":1,\"unit\":\"ea\",\"unit_price\":0.00,\"total\":0.00,\"cat\":\"Wire & Cable\"}]\n  }\n]\nRules: array even for single invoice. Each unique ship_to = separate object. Negative total = credit. Numbers only. cat must be exactly: Wire & Cable | Conduit & Fittings | Breakers & Panels | Devices & Covers | Lighting | Boxes & Enclosures | Tools & Consumables | Gear & Equipment | Other";
-  return fetch("https://api.anthropic.com/v1/messages",{
+  return fetch("/api/claude",{
     method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:8192,messages:[{role:"user",content:[fileBlock,{type:"text",text:prompt}]}]})
   }).then(function(res){
@@ -1008,10 +1008,7 @@ window.addEventListener("DOMContentLoaded",function(){
   // Load data and sync from Airtable
   dbLoad(function(){
     renderAll();
-    // Setup fields first time, then sync
-    setupTableFields().then(function(){
-      syncFromAirtable();
-    });
+    syncFromAirtable();
     setInterval(function(){if(!SYNCING)syncFromAirtable();},30000);
   });
 
