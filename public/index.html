@@ -248,8 +248,6 @@ tr.hov:hover td{background:#F9FAFB;cursor:pointer}
 <div class="pnl" id="p-jobsite">
   <div class="empty" id="je"><div class="ico">🏗</div>No jobsite data yet</div>
   <div id="jc2" style="display:none">
-    <div class="frow" id="sfrow"></div>
-    <div class="site-cards-row" id="scards"></div>
     <div id="slist"></div>
   </div>
 </div>
@@ -304,7 +302,9 @@ function normA(s){
   // Strip everything before the first street number
   var m=s.match(/\d+\s+[a-zA-Z]/);
   var clean=m?s.slice(s.indexOf(m[0])):s;
-  return clean.toLowerCase().replace(/[.,#\-]/g," ")
+  return clean.toLowerCase()
+    .replace(/\b(\d+)(st|nd|rd|th)\b/g,"$1") // "14th" -> "14", "308th" -> "308"  
+    .replace(/[.,#\-]/g," ")
     .replace(/\bstreet\b/g,"st").replace(/\bavenue\b/g,"ave")
     .replace(/\broad\b/g,"rd").replace(/\bdrive\b/g,"dr")
     .replace(/\bboulevard\b/g,"blvd").replace(/\blane\b/g,"ln")
@@ -872,19 +872,6 @@ function renderJobsites(){
   if(!sites.length)return;
   var visible=SITE_FILTER==="all"?sites:sites.filter(function(s){return s.name===SITE_FILTER;});
   // Filter pills
-  document.getElementById("sfrow").innerHTML=['<button class="fpill'+(SITE_FILTER==="all"?" on":"")+'" data-sf="all">All Jobsites</button>']
-    .concat(sites.map(function(s){return '<button class="fpill'+(SITE_FILTER===s.name?" on":"")+'" data-sf="'+esc(s.name)+'">'+esc(s.name)+"</button>";})).join("");
-  document.querySelectorAll("#sfrow .fpill").forEach(function(btn){
-    btn.addEventListener("click",function(){SITE_FILTER=this.getAttribute("data-sf");renderJobsites();});
-  });
-  // Cards
-  document.getElementById("scards").innerHTML=visible.map(function(j){
-    return '<div class="site-card'+(SITE_FILTER===j.name?" on":"")+'" data-sf="'+esc(j.name)+'"><div class="sc-name">🏗 '+esc(j.name)+'</div>'+(j.address?'<div class="sc-addr">📍 '+esc(j.address)+"</div>":"")+'<div class="sc-total">'+fmt(j.total)+'</div><div class="sc-sub">'+j.count+' invoice'+(j.count!==1?"s":"")+" · "+Object.keys(j.items).length+" items</div></div>";
-  }).join("");
-  document.querySelectorAll("#scards .site-card").forEach(function(c){
-    c.addEventListener("click",function(){SITE_FILTER=this.getAttribute("data-sf");renderJobsites();});
-  });
-  // Collapsibles
   document.getElementById("slist").innerHTML=visible.map(function(j,idx){
     var cid="scoll"+idx;
     var sortedInvs=j.invoices.slice().sort(function(a,b){return (b.date||"").localeCompare(a.date||"");});
