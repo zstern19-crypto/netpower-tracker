@@ -147,6 +147,19 @@ tr.hov:hover td{background:#F9FAFB;cursor:pointer}
 </head>
 <body>
 
+
+<!-- Login Screen -->
+<div id="login-screen" style="display:none;position:fixed;inset:0;background:linear-gradient(135deg,#EFF6FF,#F0F9FF);z-index:9999;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:16px;padding:40px;max-width:380px;width:90%;box-shadow:0 24px 64px rgba(0,0,0,.15);text-align:center">
+    <div style="font-size:48px;margin-bottom:12px">⚡</div>
+    <div style="font-family:monospace;font-size:20px;font-weight:700;color:#2563EB;margin-bottom:4px">NET POWER</div>
+    <div style="font-size:12px;color:#9CA3AF;margin-bottom:28px">Material Tracker</div>
+    <input id="login-pwd" type="password" placeholder="Enter password" style="width:100%;border:2px solid #E5E7EB;border-radius:8px;padding:12px 16px;font-size:15px;outline:none;text-align:center;letter-spacing:4px;margin-bottom:12px;font-family:monospace">
+    <button id="login-btn" style="width:100%;background:#2563EB;color:#fff;border:none;border-radius:8px;padding:12px;font-size:15px;font-weight:600;cursor:pointer">Sign In</button>
+    <div id="login-err" style="color:#DC2626;font-size:13px;margin-top:10px;display:none">Incorrect password</div>
+  </div>
+</div>
+
 <div id="hdr">
   <div id="logo">⚡ NET POWER MATERIAL TRACKER</div>
   <div id="sub-lbl">Electrical Supplier Invoice Intelligence</div>
@@ -516,16 +529,29 @@ function callAPI(b64,mime){
         invoice_date:String(inv.invoice_date||todayISO()),
         invoice_number:inv.invoice_number||null,
         ship_to:inv.ship_to||null,
-        items:(Array.isArray(inv.items)?inv.items:[]).filter(Boolean).map(function(it){
-          return {
-            name:String(it.name||"Item").slice(0,60),
-            qty:Math.abs(parseFloat(it.qty)||parseFloat(it.quantity)||1),
-            unit:String(it.unit||"ea"),
-            unit_price:Math.abs(parseFloat(it.unit_price)||0),
-            total:parseFloat(it.total)||((parseFloat(it.unit_price)||0)*(parseFloat(it.qty)||1)),
-            cat:String(it.cat||it.category||"Other")
-          };
-        })
+        items:(function(){
+          var rawItems=(Array.isArray(inv.items)?inv.items:[]).filter(Boolean);
+          var mapped=rawItems.map(function(it){
+            return {
+              name:String(it.name||"Item").slice(0,60),
+              qty:Math.abs(parseFloat(it.qty)||parseFloat(it.quantity)||1),
+              unit:String(it.unit||"ea"),
+              unit_price:Math.abs(parseFloat(it.unit_price)||0),
+              total:parseFloat(it.total)||((parseFloat(it.unit_price)||0)*(parseFloat(it.qty)||1)),
+              cat:String(it.cat||it.category||"Other")
+            };
+          });
+          // If no item has a price, distribute invoice total evenly
+          var hasPrice=mapped.some(function(it){return it.total>0||it.unit_price>0;});
+          if(!hasPrice&&mapped.length>0){
+            var invTotal=parseFloat(inv.invoice_total||inv.total||0);
+            if(invTotal>0){
+              var share=invTotal/mapped.length;
+              mapped=mapped.map(function(it){return Object.assign({},it,{total:share,unit_price:share/it.qty});});
+            }
+          }
+          return mapped;
+        })()
       };
     });
   });
@@ -815,7 +841,12 @@ function buildJobsiteMap(){
       map[canon].total+=it.total||0;
     });
   });
-  return Object.values(map).sort(function(a,b){return b.total-a.total;});
+  // Sort by most recent invoice date
+  return Object.values(map).sort(function(a,b){
+    var da=a.invoices.reduce(function(m,i){return (i.date||"")>m?i.date:m;},"");
+    var db=b.invoices.reduce(function(m,i){return (i.date||"")>m?i.date:m;},"");
+    return db.localeCompare(da);
+  });
 }
 
 function renderJobsites(){
@@ -1067,16 +1098,51 @@ window.addEventListener("DOMContentLoaded",function(){
     document.getElementById("cc").style.display="none";
   });
   document.getElementById("cyes").addEventListener("click",function(){
+    var pwd=prompt("Enter password to clear all data:");
+    if(pwd!=="1543"){
+      alert("Incorrect password.");
+      document.getElementById("cbtn").style.display="";
+      document.getElementById("cc").style.display="none";
+      return;
+    }
     dbWipe(function(){
       document.getElementById("cbtn").style.display="";
       document.getElementById("cc").style.display="none";
-      flash("ok","Data cleared — starting fresh");
+      flash("ok","Data cleared");
       renderAll();
     });
   });
   // Modal close
   document.getElementById("mclose").addEventListener("click",function(){document.getElementById("mod").classList.remove("on");});
   document.getElementById("mod").addEventListener("click",function(e){if(e.target===this)this.classList.remove("on");});
+  // Login check
+  var SESSION_KEY="np_session";
+  var APP_PASSWORD="netpower2024";
+  function checkLogin(){
+    if(sessionStorage.getItem(SESSION_KEY)==="ok"){
+      document.getElementById("login-screen").style.display="none";
+      return true;
+    }
+    document.getElementById("login-screen").style.display="flex";
+    return false;
+  }
+  document.getElementById("login-btn").addEventListener("click",function(){
+    var pwd=document.getElementById("login-pwd").value;
+    if(pwd===APP_PASSWORD||pwd==="netpower2024"){
+      sessionStorage.setItem(SESSION_KEY,"ok");
+      document.getElementById("login-screen").style.display="none";
+      loadApp();
+    } else {
+      document.getElementById("login-err").style.display="block";
+      document.getElementById("login-pwd").value="";
+    }
+  });
+  document.getElementById("login-pwd").addEventListener("keydown",function(e){
+    if(e.key==="Enter")document.getElementById("login-btn").click();
+  });
+
+  function loadApp(){
+
   // Load data and sync from Airtable
   dbLoad(function(){
     renderAll();
@@ -1091,6 +1157,10 @@ window.addEventListener("DOMContentLoaded",function(){
     var uname=prompt("Enter your name (shown on invoices):");
     if(uname)localStorage.setItem("np_username",uname.trim());
   }
+  } // end loadApp
+
+  // Check login on start
+  if(checkLogin())loadApp();
 });
 </script>
 </body>
