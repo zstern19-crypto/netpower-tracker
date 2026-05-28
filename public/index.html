@@ -1002,7 +1002,6 @@ function openMod(id){
 // ══════════════════════════════════════════════════════════
 // AIRTABLE SYNC
 // ══════════════════════════════════════════════════════════
-var API_URL = "/api/airtable";
 var SYNCING = false;
 
 function setSyncLbl(txt,col){var el=document.getElementById("sync-lbl");if(el){el.textContent=txt;el.style.color=col||"#9CA3AF";}}
@@ -1190,11 +1189,6 @@ window.addEventListener("DOMContentLoaded",function(){
     syncFromAirtable();
   });
 
-  // Username prompt if not set
-  if(!localStorage.getItem("np_username")){
-    var uname=prompt("Enter your name (shown on invoices):");
-    if(uname)localStorage.setItem("np_username",uname.trim());
-  }
   } // end loadApp
 
   // Check login on start
