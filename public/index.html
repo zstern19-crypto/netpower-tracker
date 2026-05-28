@@ -292,16 +292,26 @@ function normA(s){
     .replace(/\b(suite|ste|apt|unit|fl|floor)\b\s*[\w\d]*/gi,"")
     .replace(/\s+/g," ").trim();
 }
-function coreA(s){return normA(s).split(" ").slice(0,4).join(" ");}
+function coreA(s){
+  var parts=normA(s).split(" ").filter(function(p){return p.length>0;});
+  if(parts.length<2)return parts.join(" ");
+  return parts[0]+" "+parts[1]; // just house number + street name word
+}
 function titleCase(s){return (s||"").replace(/\w\S*/g,function(w){return w[0].toUpperCase()+w.slice(1).toLowerCase();});}
 function resolveJobsite(raw,manual){
   if(manual&&manual.trim())return manual.trim();
   if(!raw||!raw.trim())return "Unassigned";
+  // Filter out supplier/company addresses that are not job sites
+  var rawLower=raw.toLowerCase();
+  var supplierKeywords=["net power","netpower","crescent electric","y&b","y & b","electrical supply","electric supply","electric corp","lighting supply"];
+  for(var si=0;si<supplierKeywords.length;si++){
+    if(rawLower.indexOf(supplierKeywords[si])!==-1)return "Unassigned";
+  }
   var na=normA(raw),ca=coreA(raw);
   for(var i=0;i<DB.invoices.length;i++){
     var inv=DB.invoices[i];
     if(inv.na&&inv.na===na)return inv.jobsite;
-    if(inv.ca&&inv.ca.length>4&&inv.ca===ca)return inv.jobsite;
+    if(inv.ca&&inv.ca.length>2&&inv.ca===ca)return inv.jobsite;
   }
   return titleCase(raw.split(",")[0].trim())||"Unassigned";
 }
@@ -481,7 +491,7 @@ function callAPI(b64,mime){
   var fileBlock=isPDF
     ?{type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}}
     :{type:"image",source:{type:"base64",media_type:safeMime,data:b64}};
-  var prompt="You are reading an electrical supplier invoice. Read ALL pages carefully. Return ONLY a raw JSON array with no markdown or explanation:\n[\n  {\n    \"supplier\": \"supplier company name or Unknown\",\n    \"invoice_date\": \"YYYY-MM-DD or "+todayISO()+"\",\n    \"invoice_number\": \"invoice number or null\",\n    \"ship_to\": \"The SHIP TO or DELIVER TO address only — where materials were physically delivered. This is NEVER the supplier FROM address or billing address. Must be a street address. null if not found.\",\n    \"items\": [{\"name\": \"item description max 40 chars\", \"qty\": 1, \"unit\": \"ea\", \"unit_price\": 0.00, \"total\": 0.00, \"cat\": \"Wire & Cable\"}]\n  }\n]\nRules: Return array even for single invoice. Each unique ship_to = separate object. Negative total = credit. Numbers only. cat must be exactly: Wire & Cable|Conduit & Fittings|Breakers & Panels|Devices & Covers|Lighting|Boxes & Enclosures|Tools & Consumables|Gear & Equipment|Other";
+  var prompt="You are reading an electrical supplier invoice for an electrical contractor. Extract the delivery job site address.\n\nCRITICAL RULES for ship_to:\n- ship_to = where materials were DELIVERED (the job site / construction site)\n- NEVER use the supplier company address as ship_to\n- NEVER use Net Power, Net Power Electric, or any electrical contractor address as ship_to\n- The supplier is the company SELLING materials (like Y&B Lighting, Crescent Electric, etc)\n- If the invoice shows FROM: supplier address and TO: job site address, use the TO address\n- If you cannot find a clear delivery address, use null\n\nReturn ONLY a raw JSON array:\n[\n  {\n    \"supplier\": \"name of company that issued this invoice\",\n    \"invoice_date\": \"YYYY-MM-DD or "+todayISO()+"\",\n    \"invoice_number\": \"invoice number or null\",\n    \"ship_to\": \"delivery address as: NUMBER STREET, CITY STATE ZIP — null if not found\",\n    \"items\": [{\"name\": \"item max 40 chars\", \"qty\": 1, \"unit\": \"ea\", \"unit_price\": 0.00, \"total\": 0.00, \"cat\": \"Wire & Cable\"}]\n  }\n]\nRules: Array even for single invoice. Each unique ship_to = separate object. Negative total = credit. Numbers only. cat must be: Wire & Cable|Conduit & Fittings|Breakers & Panels|Devices & Covers|Lighting|Boxes & Enclosures|Tools & Consumables|Gear & Equipment|Other";
   return fetch("/api/claude",{
     method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({model:"claude-sonnet-4-5",max_tokens:8192,messages:[{role:"user",content:[fileBlock,{type:"text",text:prompt}]}]})
