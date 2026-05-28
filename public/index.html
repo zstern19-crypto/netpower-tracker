@@ -437,6 +437,7 @@ function processQueue(){
       });
     });
     dbSave();
+    console.log("Triggering push, added=",added,"total invoices=",DB.invoices.length);
     if(added>0)pushNewInvoices(DB.invoices.slice(-added));
     job.status="done";
     job.label=added===0?"Duplicate — already uploaded":added+" invoice"+(added>1?"s":"")+" saved · "+(extracted[0]?extracted[0].supplier:"")+" · syncing…";
@@ -937,16 +938,21 @@ function atHeaders(){return {"Content-Type":"application/json"};}
 
 // Push all data to Airtable via proxy
 function pushNewInvoices(invs){
-  if(!invs||!invs.length)return;
+  if(!invs||!invs.length){console.log("pushNewInvoices: nothing to push");return;}
+  console.log("Pushing",DB.invoices.length,"invoices to Airtable...");
   setSyncLbl("⟳ Saving to Airtable…","#D97706");
-  // Snapshot current DB to avoid race condition
   var snapshot={invoices:DB.invoices.slice(),items:JSON.parse(JSON.stringify(DB.items))};
+  console.log("Snapshot has",snapshot.invoices.length,"invoices");
   fetch(API_URL+"?action=write",{
     method:"POST",headers:atHeaders(),
     body:JSON.stringify({invoices:snapshot.invoices,items:snapshot.items})
-  }).then(function(r){return r.json();}).then(function(d){
+  }).then(function(r){
+    console.log("Push response status:",r.status);
+    return r.json();
+  }).then(function(d){
+    console.log("Push response:",JSON.stringify(d).slice(0,100));
     if(!d.ok)throw new Error(d.error||"Save failed");
-    setSyncLbl("● Live · "+DB.invoices.length+" invoices","#16A34A");
+    setSyncLbl("● Saved · "+DB.invoices.length+" invoices","#16A34A");
   }).catch(function(e){
     setSyncLbl("● Save error: "+e.message,"#DC2626");
     console.error("Push error:",e);
