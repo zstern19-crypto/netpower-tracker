@@ -369,7 +369,16 @@ function dbSave(){
   try{localStorage.setItem(KEY,JSON.stringify(DB));}catch(e){}
 }
 function dbWipe(cb){
-  try{localStorage.removeItem(KEY);}catch(e){}
+  // Clear ALL netpower keys to be safe
+  try{
+    var toRemove=[];
+    for(var i=0;i<localStorage.length;i++){
+      var k=localStorage.key(i);
+      if(k&&k.indexOf("netpower")!==-1)toRemove.push(k);
+    }
+    toRemove.forEach(function(k){localStorage.removeItem(k);});
+    localStorage.removeItem("np_username");
+  }catch(e){}
   DB={invoices:[],items:{}};
   if(cb)cb();
 }
@@ -1041,6 +1050,14 @@ function syncFromAirtable(){
     console.log("After filtering:",remoteInvs.length,"valid invoices");
     // Only update local DB if remote has real data
     if(remoteInvs.length>0){
+      // Fix supplier addresses that got saved as jobsites
+      remoteInvs.forEach(function(inv){
+        var jl=(inv.jobsite||"").toLowerCase();
+        var al=(inv.address||"").toLowerCase();
+        var isSupplier=jl.indexOf("net power")!==-1||jl.indexOf("electric corp")!==-1||
+                       jl.indexOf("electric inc")!==-1||al.indexOf("net power")!==-1;
+        if(isSupplier)inv.jobsite="Unassigned";
+      });
       DB.invoices=remoteInvs;
       DB.items=d.data.items||{};
       // Rebuild items if empty
@@ -1117,12 +1134,11 @@ window.addEventListener("DOMContentLoaded",function(){
         method:"POST",headers:atHeaders(),
         body:JSON.stringify({invoices:[],items:{}})
       }).then(function(){
-        setSyncLbl("● Live · 0 invoices","#16A34A");
-        flash("ok","✅ All data cleared successfully");
-        renderAll();
+        flash("ok","✅ All data cleared — reloading…");
+        setTimeout(function(){location.reload();},1500);
       }).catch(function(){
-        flash("ok","✅ Local data cleared");
-        renderAll();
+        flash("ok","✅ Local data cleared — reloading…");
+        setTimeout(function(){location.reload();},1500);
       });
     });
   });
