@@ -950,7 +950,7 @@ function pushNewInvoices(invs){
     console.log("Push response status:",r.status);
     return r.json();
   }).then(function(d){
-    console.log("Push response:",JSON.stringify(d).slice(0,100));
+    console.log("Push response:",JSON.stringify(d).slice(0,200));
     if(!d.ok)throw new Error(d.error||"Save failed");
     setSyncLbl("● Saved · "+DB.invoices.length+" invoices","#16A34A");
   }).catch(function(e){
