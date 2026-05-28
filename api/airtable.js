@@ -1,20 +1,20 @@
 const AT_TOKEN = "patzYzQBgJXZlHCr6.8021cd1fcd6fc7d7eb4239bc5096c67b5517a91adeccd58d7eb3c3ae6fccc440";
 const AT_BASE  = "appDvscikJtSDsoku";
 const AT_TABLE = "Table 1";
- 
+
 export default async function handler(req, res) {
   // Allow all origins
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") { res.status(200).end(); return; }
- 
+
   const action = req.query.action || "read";
   const headers = {
     "Authorization": "Bearer " + AT_TOKEN,
     "Content-Type": "application/json"
   };
- 
+
   try {
     if (action === "read") {
       let allRecords = [];
@@ -27,10 +27,12 @@ export default async function handler(req, res) {
         allRecords = allRecords.concat(d.records || []);
         offset = d.offset || null;
       } while (offset);
- 
+
       const invoices = allRecords.map(r => {
         const f = r.fields;
         try {
+          // Skip blank records
+          if(!f.Supplier && !f.Date && !f.InvID) return null;
           return {
             id: f.InvID || r.id,
             supplier: f.Supplier || "",
@@ -47,7 +49,7 @@ export default async function handler(req, res) {
           };
         } catch(e) { return null; }
       }).filter(Boolean);
- 
+
       // Rebuild items
       const items = {};
       invoices.forEach(inv => {
@@ -63,12 +65,33 @@ export default async function handler(req, res) {
           w[inv.weekKey].unitPrice = ((w[inv.weekKey].unitPrice * (w[inv.weekKey].count - 1)) + (it.unit_price || 0)) / w[inv.weekKey].count;
         });
       });
- 
+
       res.status(200).json({ ok: true, data: { invoices, items } });
- 
+
+    } else if (action === "cleanup") {
+      // Delete all blank records
+      let blankIds = [];
+      let offset2 = null;
+      do {
+        const url2 = `https://api.airtable.com/v0/${AT_BASE}/${encodeURIComponent(AT_TABLE)}?pageSize=100${offset2 ? "&offset=" + offset2 : ""}`;
+        const r2 = await fetch(url2, { headers });
+        const d2 = await r2.json();
+        (d2.records || []).forEach(r => {
+          const f = r.fields;
+          if(!f.Supplier && !f.Date && !f.InvID) blankIds.push(r.id);
+        });
+        offset2 = d2.offset || null;
+      } while (offset2);
+      for (let i = 0; i < blankIds.length; i += 10) {
+        const batch = blankIds.slice(i, i+10);
+        const params = batch.map(id => `records[]=${id}`).join("&");
+        await fetch(`https://api.airtable.com/v0/${AT_BASE}/${encodeURIComponent(AT_TABLE)}?${params}`, { method: "DELETE", headers });
+      }
+      res.status(200).json({ ok: true, deleted: blankIds.length });
+
     } else if (action === "write") {
       const { invoices, items } = req.body || {};
- 
+
       // Delete all existing records first
       let existingIds = [];
       let offset = null;
@@ -79,14 +102,14 @@ export default async function handler(req, res) {
         existingIds = existingIds.concat((d.records || []).map(r => r.id));
         offset = d.offset || null;
       } while (offset);
- 
+
       // Delete in batches of 10
       for (let i = 0; i < existingIds.length; i += 10) {
         const batch = existingIds.slice(i, i + 10);
         const params = batch.map(id => `records[]=${id}`).join("&");
         await fetch(`https://api.airtable.com/v0/${AT_BASE}/${encodeURIComponent(AT_TABLE)}?${params}`, { method: "DELETE", headers });
       }
- 
+
       // Write new records in batches of 10
       const records = (invoices || []).map(inv => ({
         fields: {
@@ -98,7 +121,7 @@ export default async function handler(req, res) {
           FileName: inv.fileName || "", UploadedBy: inv.uploadedBy || ""
         }
       }));
- 
+
       for (let i = 0; i < records.length; i += 10) {
         const batch = records.slice(i, i + 10);
         await fetch(`https://api.airtable.com/v0/${AT_BASE}/${encodeURIComponent(AT_TABLE)}`, {
@@ -106,9 +129,9 @@ export default async function handler(req, res) {
           body: JSON.stringify({ records: batch })
         });
       }
- 
+
       res.status(200).json({ ok: true });
- 
+
     } else if (action === "delete") {
       const invId = req.query.invId;
       const url = `https://api.airtable.com/v0/${AT_BASE}/${encodeURIComponent(AT_TABLE)}?filterByFormula=${encodeURIComponent("{InvID}='" + invId + "'")}`;
@@ -119,7 +142,7 @@ export default async function handler(req, res) {
       }
       res.status(200).json({ ok: true });
     }
- 
+
   } catch(err) {
     res.status(500).json({ ok: false, error: err.message });
   }
