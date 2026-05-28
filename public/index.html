@@ -966,9 +966,41 @@ function syncFromAirtable(){
   .then(function(r){return r.json();})
   .then(function(d){
     if(!d.ok)throw new Error(d.error||"Sync failed");
-    DB.invoices=d.data.invoices||[];
-    DB.items=d.data.items||{};
-    dbSave();
+    var remoteInvs=d.data.invoices||[];
+    // Filter out blank/invalid invoices from Airtable
+    remoteInvs=remoteInvs.filter(function(inv){
+      return inv.supplier&&inv.supplier.length>0&&inv.date&&inv.date.length>0;
+    });
+    // Only update local DB if remote has real data
+    if(remoteInvs.length>0){
+      DB.invoices=remoteInvs;
+      DB.items=d.data.items||{};
+      // Rebuild items if empty
+      if(!Object.keys(DB.items).length&&DB.invoices.length){
+        DB.items={};
+        DB.invoices.forEach(function(inv){
+          (inv.items||[]).forEach(function(it){
+            var k=it.name.toLowerCase().trim();
+            if(!DB.items[k])DB.items[k]={name:it.name,cat:it.cat||"Other",weeks:{}};
+            var w=DB.items[k].weeks;
+            if(!w[inv.weekKey])w[inv.weekKey]={total:0,qty:0,unitPrice:0,count:0};
+            w[inv.weekKey].total+=it.total||0;
+            w[inv.weekKey].qty+=it.qty||0;
+            w[inv.weekKey].count+=1;
+            w[inv.weekKey].unitPrice=((w[inv.weekKey].unitPrice*(w[inv.weekKey].count-1))+(it.unit_price||0))/w[inv.weekKey].count;
+          });
+        });
+      }
+      dbSave();
+    } else if(DB.invoices.length>0){
+      // We have local data but Airtable is empty/blank - push local to Airtable
+      setSyncLbl("⟳ Pushing local data to Airtable…","#D97706");
+      pushNewInvoices(DB.invoices);
+      SYNCING=false;
+      setSyncLbl("● Live · "+DB.invoices.length+" invoices","#16A34A");
+      renderAll();
+      return;
+    }
     SYNCING=false;
     setSyncLbl("● Live · "+DB.invoices.length+" invoices","#16A34A");
     renderAll();
@@ -1015,6 +1047,8 @@ window.addEventListener("DOMContentLoaded",function(){
   dbLoad(function(){
     renderAll();
     // Only sync once on load, no auto-sync to avoid overwriting
+    // Clean up blank Airtable records first
+    fetch(API_URL+"?action=cleanup",{headers:atHeaders()}).catch(function(){});
     syncFromAirtable();
   });
 
