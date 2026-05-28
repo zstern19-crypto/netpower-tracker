@@ -303,13 +303,20 @@ function normA(s){
   var m=s.match(/\d+\s+[a-zA-Z]/);
   var clean=m?s.slice(s.indexOf(m[0])):s;
   return clean.toLowerCase()
-    .replace(/\b(\d+)(st|nd|rd|th)\b/g,"$1") // "14th" -> "14", "308th" -> "308"  
+    .replace(/\b(\d+)(st|nd|rd|th)\b/g,"$1")
     .replace(/[.,#\-]/g," ")
-    .replace(/\bstreet\b/g,"st").replace(/\bavenue\b/g,"ave")
+    .replace(/\bstreet\b/g,"st").replace(/\bstreets\b/g,"st")
+    .replace(/\bavenue\b/g,"ave").replace(/\bave\b/g,"ave")
+    .replace(/\beast\b/g,"e").replace(/\bwest\b/g,"w")
+    .replace(/\bnorth\b/g,"n").replace(/\bsouth\b/g,"s")
     .replace(/\broad\b/g,"rd").replace(/\bdrive\b/g,"dr")
     .replace(/\bboulevard\b/g,"blvd").replace(/\blane\b/g,"ln")
     .replace(/\bcourt\b/g,"ct").replace(/\bplace\b/g,"pl")
+    .replace(/\bsaint\b/g,"st").replace(/\bmount\b/g,"mt")
     .replace(/\b(suite|ste|apt|unit|fl|floor)\b\s*[\w\d]*/gi,"")
+    .replace(/\bny\b/g,"").replace(/\bnew york\b/g,"")
+    .replace(/\bbrooklyn\b/g,"").replace(/\bmanhattan\b/g,"")
+    .replace(/\d{5}(-\d{4})?/g,"")
     .replace(/\s+/g," ").trim();
 }
 function coreA(s){
