@@ -938,14 +938,19 @@ function atHeaders(){return {"Content-Type":"application/json"};}
 // Push all data to Airtable via proxy
 function pushNewInvoices(invs){
   if(!invs||!invs.length)return;
-  setSyncLbl("⟳ Saving…","#D97706");
+  setSyncLbl("⟳ Saving to Airtable…","#D97706");
+  // Snapshot current DB to avoid race condition
+  var snapshot={invoices:DB.invoices.slice(),items:JSON.parse(JSON.stringify(DB.items))};
   fetch(API_URL+"?action=write",{
     method:"POST",headers:atHeaders(),
-    body:JSON.stringify({invoices:DB.invoices,items:DB.items})
+    body:JSON.stringify({invoices:snapshot.invoices,items:snapshot.items})
   }).then(function(r){return r.json();}).then(function(d){
     if(!d.ok)throw new Error(d.error||"Save failed");
     setSyncLbl("● Live · "+DB.invoices.length+" invoices","#16A34A");
-  }).catch(function(e){setSyncLbl("● Save error: "+e.message,"#DC2626");});
+  }).catch(function(e){
+    setSyncLbl("● Save error: "+e.message,"#DC2626");
+    console.error("Push error:",e);
+  });
 }
 
 // Delete invoice from Airtable via proxy
@@ -1009,8 +1014,8 @@ window.addEventListener("DOMContentLoaded",function(){
   // Load data and sync from Airtable
   dbLoad(function(){
     renderAll();
+    // Only sync once on load, no auto-sync to avoid overwriting
     syncFromAirtable();
-    setInterval(function(){if(!SYNCING)syncFromAirtable();},60000);
   });
 
   // Username prompt if not set
