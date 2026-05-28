@@ -96,32 +96,25 @@ export default async function handler(req, res) {
         return;
       }
 
-      // Step 1: Get all existing record IDs
-      let existingIds = [];
+      // Get existing records to find which InvIDs already exist
+      let existingMap = {}; // InvID -> airtable record id
       let offset = null;
       do {
-        const url = `https://api.airtable.com/v0/${AT_BASE}/${encodeURIComponent(AT_TABLE)}?pageSize=100${offset ? "&offset=" + offset : ""}`;
+        const url = "https://api.airtable.com/v0/" + AT_BASE + "/" + encodeURIComponent(AT_TABLE) + "?pageSize=100" + (offset ? "&offset=" + offset : "");
         const r = await fetch(url, { headers });
         const d = await r.json();
         if (d.error) throw new Error("Read error: " + d.error.message);
-        existingIds = existingIds.concat((d.records || []).map(rec => rec.id));
+        (d.records || []).forEach(rec => {
+          if (rec.fields.InvID) existingMap[rec.fields.InvID] = rec.id;
+        });
         offset = d.offset || null;
       } while (offset);
 
-      // Step 2: Delete existing records in batches of 10
-      for (let i = 0; i < existingIds.length; i += 10) {
-        const batch = existingIds.slice(i, i + 10);
-        const params = batch.map(id => "records[]=" + id).join("&");
-        const dr = await fetch("https://api.airtable.com/v0/" + AT_BASE + "/" + encodeURIComponent(AT_TABLE) + "?" + params, {
-          method: "DELETE", headers
-        });
-        const dd = await dr.json();
-        if (dd.error) throw new Error("Delete error: " + dd.error.message);
-      }
-
-      // Step 3: Write new records in batches of 10
-      const records = invoices.map(inv => ({
-        fields: {
+      // Split into new records (create) and existing records (update)
+      const toCreate = [];
+      const toUpdate = [];
+      invoices.forEach(inv => {
+        const fields = {
           InvID: String(inv.id || ""),
           Supplier: String(inv.supplier || ""),
           Date: String(inv.date || ""),
@@ -134,22 +127,41 @@ export default async function handler(req, res) {
           ItemsJSON: JSON.stringify(inv.items || []),
           FileName: String(inv.fileName || ""),
           UploadedBy: String(inv.uploadedBy || "")
+        };
+        if (existingMap[inv.id]) {
+          toUpdate.push({ id: existingMap[inv.id], fields });
+        } else {
+          toCreate.push({ fields });
         }
-      }));
+      });
 
       let written = 0;
-      for (let i = 0; i < records.length; i += 10) {
-        const batch = records.slice(i, i + 10);
+
+      // Create new records in batches of 10
+      for (let i = 0; i < toCreate.length; i += 10) {
+        const batch = toCreate.slice(i, i + 10);
         const wr = await fetch("https://api.airtable.com/v0/" + AT_BASE + "/" + encodeURIComponent(AT_TABLE), {
           method: "POST", headers,
           body: JSON.stringify({ records: batch })
         });
         const wd = await wr.json();
-        if (wd.error) throw new Error("Write error: " + wd.error.message);
+        if (wd.error) throw new Error("Create error: " + wd.error.message);
         written += (wd.records || []).length;
       }
 
-      res.status(200).json({ ok: true, written });
+      // Update existing records in batches of 10
+      for (let i = 0; i < toUpdate.length; i += 10) {
+        const batch = toUpdate.slice(i, i + 10);
+        const wr = await fetch("https://api.airtable.com/v0/" + AT_BASE + "/" + encodeURIComponent(AT_TABLE), {
+          method: "PATCH", headers,
+          body: JSON.stringify({ records: batch })
+        });
+        const wd = await wr.json();
+        if (wd.error) throw new Error("Update error: " + wd.error.message);
+        written += (wd.records || []).length;
+      }
+
+      res.status(200).json({ ok: true, written, created: toCreate.length, updated: toUpdate.length });
 
     } else if (action === "delete") {
       const invId = req.query.invId;
