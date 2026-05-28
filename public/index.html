@@ -842,16 +842,25 @@ document.addEventListener("DOMContentLoaded",function(){
 });
 
 function buildJobsiteMap(){
-  var addrMap={};
+  // Build a map of coreA -> canonical jobsite name (first seen wins)
+  var caMap={};
   DB.invoices.forEach(function(inv){
-    var na=inv.na||normA(inv.address||""),ca=inv.ca||coreA(inv.address||""),name=inv.jobsite||"Unassigned";
-    if(na&&!addrMap[na])addrMap[na]=name;
-    if(ca&&ca.length>4&&!addrMap[ca])addrMap[ca]=name;
+    var ca=coreA(inv.address||inv.jobsite||"");
+    var name=inv.jobsite||"Unassigned";
+    // Skip supplier addresses
+    var nl=name.toLowerCase();
+    if(nl.indexOf("net power")!==-1||nl.indexOf("electric corp")!==-1||nl.indexOf("electric inc")!==-1)return;
+    if(ca&&ca.length>2&&!caMap[ca])caMap[ca]=name;
   });
   var map={};
   DB.invoices.forEach(function(inv){
-    var na=inv.na||normA(inv.address||""),ca=inv.ca||coreA(inv.address||"");
-    var canon=(na&&addrMap[na])||(ca&&ca.length>4&&addrMap[ca])||inv.jobsite||"Unassigned";
+    // Try coreA of address first, then coreA of jobsite
+    var ca=coreA(inv.address||"");
+    if(!ca||ca.length<=2)ca=coreA(inv.jobsite||"");
+    var jobsite=inv.jobsite||"Unassigned";
+    var jl=jobsite.toLowerCase();
+    var isSupplier=jl.indexOf("net power")!==-1||jl.indexOf("electric corp")!==-1||jl.indexOf("electric inc")!==-1;
+    var canon=isSupplier?"Unassigned":(ca&&ca.length>2&&caMap[ca]?caMap[ca]:jobsite);
     if(!map[canon])map[canon]={name:canon,address:inv.address||null,total:0,items:{},invoices:[],count:0};
     if(inv.address&&(!map[canon].address||inv.address.length>map[canon].address.length))map[canon].address=inv.address;
     map[canon].count++;
