@@ -90,47 +90,66 @@ export default async function handler(req, res) {
       res.status(200).json({ ok: true, deleted: blankIds.length });
 
     } else if (action === "write") {
-      const { invoices, items } = req.body || {};
+      const { invoices } = req.body || {};
+      if (!invoices || !invoices.length) {
+        res.status(200).json({ ok: true, message: "nothing to write" });
+        return;
+      }
 
-      // Delete all existing records first
+      // Step 1: Get all existing record IDs
       let existingIds = [];
       let offset = null;
       do {
-        const url = `https://api.airtable.com/v0/${AT_BASE}/${encodeURIComponent(AT_TABLE)}?pageSize=100${offset ? "&offset=" + offset : ""}&fields[]=InvID`;
+        const url = `https://api.airtable.com/v0/${AT_BASE}/${encodeURIComponent(AT_TABLE)}?pageSize=100${offset ? "&offset=" + offset : ""}`;
         const r = await fetch(url, { headers });
         const d = await r.json();
-        existingIds = existingIds.concat((d.records || []).map(r => r.id));
+        if (d.error) throw new Error("Read error: " + d.error.message);
+        existingIds = existingIds.concat((d.records || []).map(rec => rec.id));
         offset = d.offset || null;
       } while (offset);
 
-      // Delete in batches of 10
+      // Step 2: Delete existing records in batches of 10
       for (let i = 0; i < existingIds.length; i += 10) {
         const batch = existingIds.slice(i, i + 10);
-        const params = batch.map(id => `records[]=${id}`).join("&");
-        await fetch(`https://api.airtable.com/v0/${AT_BASE}/${encodeURIComponent(AT_TABLE)}?${params}`, { method: "DELETE", headers });
+        const params = batch.map(id => "records[]=" + id).join("&");
+        const dr = await fetch("https://api.airtable.com/v0/" + AT_BASE + "/" + encodeURIComponent(AT_TABLE) + "?" + params, {
+          method: "DELETE", headers
+        });
+        const dd = await dr.json();
+        if (dd.error) throw new Error("Delete error: " + dd.error.message);
       }
 
-      // Write new records in batches of 10
-      const records = (invoices || []).map(inv => ({
+      // Step 3: Write new records in batches of 10
+      const records = invoices.map(inv => ({
         fields: {
-          InvID: inv.id, Supplier: inv.supplier, Date: inv.date,
-          InvoiceNum: inv.invoice_number || "",
-          WeekKey: inv.weekKey, Jobsite: inv.jobsite,
-          Address: inv.address || "", NA: inv.na || "", CA: inv.ca || "",
+          InvID: String(inv.id || ""),
+          Supplier: String(inv.supplier || ""),
+          Date: String(inv.date || ""),
+          InvoiceNum: String(inv.invoice_number || ""),
+          WeekKey: String(inv.weekKey || ""),
+          Jobsite: String(inv.jobsite || ""),
+          Address: String(inv.address || ""),
+          NA: String(inv.na || ""),
+          CA: String(inv.ca || ""),
           ItemsJSON: JSON.stringify(inv.items || []),
-          FileName: inv.fileName || "", UploadedBy: inv.uploadedBy || ""
+          FileName: String(inv.fileName || ""),
+          UploadedBy: String(inv.uploadedBy || "")
         }
       }));
 
+      let written = 0;
       for (let i = 0; i < records.length; i += 10) {
         const batch = records.slice(i, i + 10);
-        await fetch(`https://api.airtable.com/v0/${AT_BASE}/${encodeURIComponent(AT_TABLE)}`, {
+        const wr = await fetch("https://api.airtable.com/v0/" + AT_BASE + "/" + encodeURIComponent(AT_TABLE), {
           method: "POST", headers,
           body: JSON.stringify({ records: batch })
         });
+        const wd = await wr.json();
+        if (wd.error) throw new Error("Write error: " + wd.error.message);
+        written += (wd.records || []).length;
       }
 
-      res.status(200).json({ ok: true });
+      res.status(200).json({ ok: true, written });
 
     } else if (action === "delete") {
       const invId = req.query.invId;
