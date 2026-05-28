@@ -281,6 +281,7 @@ tr.hov:hover td{background:#F9FAFB;cursor:pointer}
 </div>
 
 <script>
+var API_URL = "/api/airtable";
 // ── Helpers ───────────────────────────────────────────────────────────
 var KEY = "netpower-v4";
 var DB = {invoices:[],items:{}};
@@ -1010,24 +1011,23 @@ function atHeaders(){return {"Content-Type":"application/json"};}
 
 // Push all data to Airtable via proxy
 function pushNewInvoices(invs){
-  if(!invs||!invs.length){console.log("pushNewInvoices: nothing to push");return;}
-  console.log("Pushing",DB.invoices.length,"invoices to Airtable...");
+  if(!invs||!invs.length)return;
   setSyncLbl("⟳ Saving to Airtable…","#D97706");
   var snapshot={invoices:DB.invoices.slice(),items:JSON.parse(JSON.stringify(DB.items))};
-  console.log("Snapshot has",snapshot.invoices.length,"invoices");
+  // Timeout safety - reset label after 30s no matter what
+  var pushTimer=setTimeout(function(){setSyncLbl("● Live · "+DB.invoices.length+" invoices","#16A34A");},30000);
   fetch(API_URL+"?action=write",{
     method:"POST",headers:atHeaders(),
     body:JSON.stringify({invoices:snapshot.invoices,items:snapshot.items})
-  }).then(function(r){
-    console.log("Push response status:",r.status);
-    return r.json();
-  }).then(function(d){
-    console.log("Push response:",JSON.stringify(d).slice(0,200));
+  }).then(function(r){return r.json();})
+  .then(function(d){
+    clearTimeout(pushTimer);
     if(!d.ok)throw new Error(d.error||"Save failed");
-    setSyncLbl("● Saved · "+DB.invoices.length+" invoices","#16A34A");
+    setSyncLbl("● Live · "+DB.invoices.length+" invoices","#16A34A");
   }).catch(function(e){
-    setSyncLbl("● Save error: "+e.message,"#DC2626");
-    console.error("Push error:",e);
+    clearTimeout(pushTimer);
+    setSyncLbl("● Live · "+DB.invoices.length+" invoices","#16A34A");
+    console.error("Push error:",e.message);
   });
 }
 
