@@ -337,19 +337,16 @@ function ibtn(inv){
 
 // ── Storage ───────────────────────────────────────────────────────────
 function dbLoad(cb){
-  try{
-    window.storage.get(KEY).then(function(r){
-      try{if(r&&r.value)DB=JSON.parse(r.value);}catch(e){}
-      cb();
-    }).catch(function(){cb();});
-  }catch(e){cb();}
+  try{var s=localStorage.getItem(KEY);if(s)DB=JSON.parse(s);}catch(e){}
+  cb();
 }
 function dbSave(){
-  try{window.storage.set(KEY,JSON.stringify(DB));}catch(e){}
+  try{localStorage.setItem(KEY,JSON.stringify(DB));}catch(e){}
 }
 function dbWipe(cb){
-  try{window.storage.delete(KEY).then(function(){DB={invoices:[],items:{}};cb();}).catch(function(){DB={invoices:[],items:{}};cb();});}
-  catch(e){DB={invoices:[],items:{}};cb();}
+  try{localStorage.removeItem(KEY);}catch(e){}
+  DB={invoices:[],items:{}};
+  if(cb)cb();
 }
 
 // ── Alert ─────────────────────────────────────────────────────────────
@@ -361,13 +358,14 @@ function flash(type,msg){
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────
-var TABS=["upload","chart","prices","jobsite","category"];
+var TABS=["upload","prices","jobsite","category"];
 function showTab(name){
   TABS.forEach(function(t){
-    document.getElementById("p-"+t).classList[t===name?"add":"remove"]("on");
-    document.getElementById("t-"+t).classList[t===name?"add":"remove"]("on");
+    var panel=document.getElementById("p-"+t);
+    var tabBtn=document.getElementById("t-"+t);
+    if(panel)panel.classList[t===name?"add":"remove"]("on");
+    if(tabBtn)tabBtn.classList[t===name?"add":"remove"]("on");
   });
-  if(name==="chart")renderChart();
   if(name==="prices")renderPrices();
   if(name==="jobsite")renderJobsites();
   if(name==="category")renderCategories();
