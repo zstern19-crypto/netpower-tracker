@@ -297,7 +297,10 @@ function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").
 function mkId(){return "id"+Math.random().toString(36).slice(2,10)+Date.now().toString(36);}
 function normA(s){
   if(!s)return "";
-  return s.toLowerCase().replace(/[.,#-]/g," ")
+  // Strip everything before the first street number
+  var m=s.match(/\d+\s+[a-zA-Z]/);
+  var clean=m?s.slice(s.indexOf(m[0])):s;
+  return clean.toLowerCase().replace(/[.,#\-]/g," ")
     .replace(/\bstreet\b/g,"st").replace(/\bavenue\b/g,"ave")
     .replace(/\broad\b/g,"rd").replace(/\bdrive\b/g,"dr")
     .replace(/\bboulevard\b/g,"blvd").replace(/\blane\b/g,"ln")
@@ -308,7 +311,7 @@ function normA(s){
 function coreA(s){
   var parts=normA(s).split(" ").filter(function(p){return p.length>0;});
   if(parts.length<2)return parts.join(" ");
-  return parts[0]+" "+parts[1]; // just house number + street name word
+  return parts[0]+" "+parts[1]; // street number + first word of street name
 }
 function titleCase(s){return (s||"").replace(/\w\S*/g,function(w){return w[0].toUpperCase()+w.slice(1).toLowerCase();});}
 function resolveJobsite(raw,manual){
@@ -871,7 +874,8 @@ function renderJobsites(){
   // Collapsibles
   document.getElementById("slist").innerHTML=visible.map(function(j,idx){
     var cid="scoll"+idx;
-    var invBtns=j.invoices.map(function(inv){return ibtn(inv);}).join(" ");
+    var sortedInvs=j.invoices.slice().sort(function(a,b){return (b.date||"").localeCompare(a.date||"");});
+    var invBtns=sortedInvs.map(function(inv){return ibtn(inv);}).join(" ");
     var itemRows=Object.values(j.items).sort(function(a,b){return b.total-a.total;}).map(function(it,i){
       return "<tr style='background:"+(i%2?"#F9FAFB":"#fff")+"'><td style='font-weight:500'>"+esc(it.name)+"</td><td class='mono dim'>"+(it.qty%1===0?it.qty:it.qty.toFixed(1))+"</td><td class='mono amber b'>"+fmt(it.total)+"</td><td><div class='bar-row'><div class='bar-bg'><div class='bar-fi' style='width:"+(j.total?Math.min(100,(it.total/j.total)*100):0)+"%'></div></div><span class='bar-pc'>"+(j.total?((it.total/j.total)*100).toFixed(1):0)+"%</span></div></td></tr>";
     }).join("");
@@ -1117,7 +1121,7 @@ window.addEventListener("DOMContentLoaded",function(){
   document.getElementById("mod").addEventListener("click",function(e){if(e.target===this)this.classList.remove("on");});
   // Login check
   var SESSION_KEY="np_session";
-  var APP_PASSWORD="netpower2024";
+  var APP_PASSWORD="1543";
   function checkLogin(){
     if(sessionStorage.getItem(SESSION_KEY)==="ok"){
       document.getElementById("login-screen").style.display="none";
@@ -1128,7 +1132,7 @@ window.addEventListener("DOMContentLoaded",function(){
   }
   document.getElementById("login-btn").addEventListener("click",function(){
     var pwd=document.getElementById("login-pwd").value;
-    if(pwd===APP_PASSWORD||pwd==="netpower2024"){
+    if(pwd===APP_PASSWORD||pwd==="1543"){
       sessionStorage.setItem(SESSION_KEY,"ok");
       document.getElementById("login-screen").style.display="none";
       loadApp();
