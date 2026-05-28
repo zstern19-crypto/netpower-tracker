@@ -65,9 +65,9 @@ button:hover{opacity:.85}
 .qx{background:none;border:none;font-size:18px;color:#9CA3AF;padding:0;line-height:1}
 
 /* ── Cards / tables ── */
-.card{background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:16px;margin-bottom:12px}
+.card{background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:16px;margin-bottom:12px;overflow-x:auto;-webkit-overflow-scrolling:touch}
 .sec{font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px}
-table{width:100%;border-collapse:collapse;font-size:12px}
+table{width:100%;border-collapse:collapse;font-size:12px}.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
 th{padding:6px 10px;text-align:left;color:#9CA3AF;font-weight:600;border-bottom:1px solid #E5E7EB;font-size:10px;text-transform:uppercase;letter-spacing:.8px}
 td{padding:8px 10px;border-bottom:1px solid #F8F9FA;vertical-align:middle}
 tr.hov:hover td{background:#F9FAFB;cursor:pointer}
@@ -92,7 +92,7 @@ tr.hov:hover td{background:#F9FAFB;cursor:pointer}
 .coll-ttl{font-size:13px;font-weight:600}
 .coll-bdg{font-size:11px;color:#9CA3AF;background:#fff;padding:1px 7px;border-radius:10px;border:1px solid #E5E7EB;margin-left:8px}
 .coll-rgt{font-family:monospace;font-size:13px;font-weight:700;text-align:right}
-.coll-body{border-top:1px solid #E5E7EB;display:none}
+.coll-body{border-top:1px solid #E5E7EB;display:none;overflow-x:auto;-webkit-overflow-scrolling:touch}
 .coll.open .coll-body{display:block}
 
 /* ── Search bar ── */
@@ -171,10 +171,14 @@ tr.hov:hover td{background:#F9FAFB;cursor:pointer}
   <button class="sm-btn" id="cbtn">🗑 Clear All Data</button>
     <button class="sm-btn" id="sync-btn" onclick="syncFromAirtable()">🔄 Sync</button>
     <span id="sync-lbl" style="font-size:11px;color:#9CA3AF;font-family:monospace;margin-left:4px"></span>
-  <div id="cc">
-    <span>Delete everything?</span>
-    <button class="sm-btn danger-btn" id="cyes">Yes, clear</button>
-    <button class="sm-btn" id="cno">Cancel</button>
+  <div id="cc" style="flex-direction:column;gap:8px">
+    <span style="font-size:12px;color:#DC2626;font-weight:600">Enter password to clear all data:</span>
+    <div style="display:flex;gap:8px;align-items:center">
+      <input id="clear-pwd-input" type="password" placeholder="Password" style="border:1px solid #E5E7EB;border-radius:6px;padding:5px 10px;font-size:13px;outline:none;width:120px">
+      <button class="sm-btn danger-btn" id="cyes">Clear</button>
+      <button class="sm-btn" id="cno">Cancel</button>
+    </div>
+    <div id="clear-pwd-err" style="font-size:11px;color:#DC2626;display:none">Incorrect password</div>
   </div>
 </div>
 
@@ -1118,17 +1122,17 @@ window.addEventListener("DOMContentLoaded",function(){
     document.getElementById("cc").style.display="none";
   });
   document.getElementById("cyes").addEventListener("click",function(){
-    var pwd=prompt("Enter password to clear all data:");
+    var pwd=document.getElementById("clear-pwd-input").value;
     if(pwd!=="1543"){
-      alert("Incorrect password.");
-      document.getElementById("cbtn").style.display="";
-      document.getElementById("cc").style.display="none";
+      document.getElementById("clear-pwd-err").style.display="block";
+      document.getElementById("clear-pwd-input").value="";
       return;
     }
+    document.getElementById("clear-pwd-err").style.display="none";
+    document.getElementById("cbtn").style.display="";
+    document.getElementById("cc").style.display="none";
+    document.getElementById("clear-pwd-input").value="";
     dbWipe(function(){
-      document.getElementById("cbtn").style.display="";
-      document.getElementById("cc").style.display="none";
-      // Wipe Airtable too
       setSyncLbl("⟳ Clearing Airtable…","#D97706");
       fetch(API_URL+"?action=write",{
         method:"POST",headers:atHeaders(),
@@ -1141,6 +1145,10 @@ window.addEventListener("DOMContentLoaded",function(){
         setTimeout(function(){location.reload();},1500);
       });
     });
+  });
+  // Also allow Enter key in password field
+  document.getElementById("clear-pwd-input").addEventListener("keydown",function(e){
+    if(e.key==="Enter")document.getElementById("cyes").click();
   });
   // Modal close
   document.getElementById("mclose").addEventListener("click",function(){document.getElementById("mod").classList.remove("on");});
