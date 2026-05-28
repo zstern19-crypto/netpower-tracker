@@ -284,7 +284,7 @@ function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").
 function mkId(){return "id"+Math.random().toString(36).slice(2,10)+Date.now().toString(36);}
 function normA(s){
   if(!s)return "";
-  return s.toLowerCase().replace(/[.,#]/g," ")
+  return s.toLowerCase().replace(/[.,#-]/g," ")
     .replace(/\bstreet\b/g,"st").replace(/\bavenue\b/g,"ave")
     .replace(/\broad\b/g,"rd").replace(/\bdrive\b/g,"dr")
     .replace(/\bboulevard\b/g,"blvd").replace(/\blane\b/g,"ln")
@@ -292,7 +292,7 @@ function normA(s){
     .replace(/\b(suite|ste|apt|unit|fl|floor)\b\s*[\w\d]*/gi,"")
     .replace(/\s+/g," ").trim();
 }
-function coreA(s){return normA(s).split(" ").slice(0,3).join(" ");}
+function coreA(s){return normA(s).split(" ").slice(0,4).join(" ");}
 function titleCase(s){return (s||"").replace(/\w\S*/g,function(w){return w[0].toUpperCase()+w.slice(1).toLowerCase();});}
 function resolveJobsite(raw,manual){
   if(manual&&manual.trim())return manual.trim();
@@ -483,7 +483,7 @@ function callAPI(b64,mime){
   var fileBlock=isPDF
     ?{type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}}
     :{type:"image",source:{type:"base64",media_type:safeMime,data:b64}};
-  var prompt="You are reading an electrical supplier invoice. Read ALL pages. Return ONLY a raw JSON array:\n[\n  {\n    \"supplier\": \"name or Unknown\",\n    \"invoice_date\": \"YYYY-MM-DD or "+todayISO()+"\",\n    \"invoice_number\": \"number or null\",\n    \"ship_to\": \"SHIP-TO/JOB SITE address one line or null\",\n    \"items\": [{\"name\":\"max 40 chars\",\"qty\":1,\"unit\":\"ea\",\"unit_price\":0.00,\"total\":0.00,\"cat\":\"Wire & Cable\"}]\n  }\n]\nRules: array even for single invoice. Each unique ship_to = separate object. Negative total = credit. Numbers only. cat must be exactly: Wire & Cable | Conduit & Fittings | Breakers & Panels | Devices & Covers | Lighting | Boxes & Enclosures | Tools & Consumables | Gear & Equipment | Other";
+  var prompt="You are reading an electrical supplier invoice. Read ALL pages carefully. Return ONLY a raw JSON array with no markdown or explanation:\n[\n  {\n    \"supplier\": \"supplier company name or Unknown\",\n    \"invoice_date\": \"YYYY-MM-DD or "+todayISO()+"\",\n    \"invoice_number\": \"invoice number or null\",\n    \"ship_to\": \"The SHIP TO or DELIVER TO address — full street address including number, street, city, state, zip on one line. This is the delivery address NOT the supplier address. Write null only if completely absent.\",\n    \"items\": [{\"name\": \"item description max 40 chars\", \"qty\": 1, \"unit\": \"ea\", \"unit_price\": 0.00, \"total\": 0.00, \"cat\": \"Wire & Cable\"}]\n  }\n]\nRules: Return array even for single invoice. Each unique ship_to = separate object. Negative total = credit. Numbers only, never strings. cat must be exactly: Wire & Cable|Conduit & Fittings|Breakers & Panels|Devices & Covers|Lighting|Boxes & Enclosures|Tools & Consumables|Gear & Equipment|Other";
   return fetch("/api/claude",{
     method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({model:"claude-sonnet-4-5",max_tokens:8192,messages:[{role:"user",content:[fileBlock,{type:"text",text:prompt}]}]})
@@ -585,7 +585,7 @@ function renderRecent(){
   var wrap=document.getElementById("recwrap"),tb=document.getElementById("rectb");
   if(!DB.invoices.length){wrap.style.display="none";return;}
   wrap.style.display="block";
-  var rows=DB.invoices.slice().reverse().slice(0,50);
+  var rows=DB.invoices.slice().sort(function(a,b){return (b.date||"").localeCompare(a.date||"");}).slice(0,50);
   tb.innerHTML=rows.map(function(inv){
     return '<tr style="background:#fff"><td class="mono dim" style="font-size:11px">'+esc(inv.date)+'</td><td class="b">'+esc(inv.supplier)+'</td><td class="mono dim" style="font-size:11px">'+esc(inv.invoice_number||"—")+'</td><td style="color:#0891B2;font-size:11px">'+esc(inv.address||inv.jobsite||"—")+'</td><td>'+(inv.items||[]).length+'</td>'+
       '<td style="white-space:nowrap"><button class="ibtn" style="margin-right:4px" data-view="'+inv.id+'">👁 View</button>'+
