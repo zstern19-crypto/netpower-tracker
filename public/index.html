@@ -437,8 +437,9 @@ function processQueue(){
       });
     });
     dbSave();
+    if(added>0)pushNewInvoices(DB.invoices.slice(-added));
     job.status="done";
-    job.label=added===0?"Duplicate — already uploaded":added+" invoice"+(added>1?"s":"")+" saved · "+(extracted[0]?extracted[0].supplier:"");
+    job.label=added===0?"Duplicate — already uploaded":added+" invoice"+(added>1?"s":"")+" saved · "+(extracted[0]?extracted[0].supplier:"")+" · syncing…";
     renderAll();
     setTimeout(function(){QUEUE=QUEUE.filter(function(j){return j.id!==job.id;});renderQueue();},2000);
   }).catch(function(e){
@@ -1009,7 +1010,7 @@ window.addEventListener("DOMContentLoaded",function(){
   dbLoad(function(){
     renderAll();
     syncFromAirtable();
-    setInterval(function(){if(!SYNCING)syncFromAirtable();},30000);
+    setInterval(function(){if(!SYNCING)syncFromAirtable();},60000);
   });
 
   // Username prompt if not set
