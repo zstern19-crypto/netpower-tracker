@@ -168,7 +168,7 @@ tr.hov:hover td{background:#F9FAFB;cursor:pointer}
 
 <div id="tabs">
   <button class="tab on" id="t-upload">📤 Upload</button>
-  <button class="tab" id="t-chart">📈 Chart</button>
+  
   <button class="tab" id="t-prices">💲 Prices</button>
   <button class="tab" id="t-jobsite">🏗 Jobsites</button>
   <button class="tab" id="t-category">🗂 Categories</button>
@@ -483,7 +483,7 @@ function callAPI(b64,mime){
   var fileBlock=isPDF
     ?{type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}}
     :{type:"image",source:{type:"base64",media_type:safeMime,data:b64}};
-  var prompt="You are reading an electrical supplier invoice. Read ALL pages carefully. Return ONLY a raw JSON array with no markdown or explanation:\n[\n  {\n    \"supplier\": \"supplier company name or Unknown\",\n    \"invoice_date\": \"YYYY-MM-DD or "+todayISO()+"\",\n    \"invoice_number\": \"invoice number or null\",\n    \"ship_to\": \"The SHIP TO or DELIVER TO address — full street address including number, street, city, state, zip on one line. This is the delivery address NOT the supplier address. Write null only if completely absent.\",\n    \"items\": [{\"name\": \"item description max 40 chars\", \"qty\": 1, \"unit\": \"ea\", \"unit_price\": 0.00, \"total\": 0.00, \"cat\": \"Wire & Cable\"}]\n  }\n]\nRules: Return array even for single invoice. Each unique ship_to = separate object. Negative total = credit. Numbers only, never strings. cat must be exactly: Wire & Cable|Conduit & Fittings|Breakers & Panels|Devices & Covers|Lighting|Boxes & Enclosures|Tools & Consumables|Gear & Equipment|Other";
+  var prompt="You are reading an electrical supplier invoice. Read ALL pages carefully. Return ONLY a raw JSON array with no markdown or explanation:\n[\n  {\n    \"supplier\": \"supplier company name or Unknown\",\n    \"invoice_date\": \"YYYY-MM-DD or "+todayISO()+"\",\n    \"invoice_number\": \"invoice number or null\",\n    \"ship_to\": \"The SHIP TO or DELIVER TO address only — where materials were physically delivered. This is NEVER the supplier FROM address or billing address. Must be a street address. null if not found.\",\n    \"items\": [{\"name\": \"item description max 40 chars\", \"qty\": 1, \"unit\": \"ea\", \"unit_price\": 0.00, \"total\": 0.00, \"cat\": \"Wire & Cable\"}]\n  }\n]\nRules: Return array even for single invoice. Each unique ship_to = separate object. Negative total = credit. Numbers only. cat must be exactly: Wire & Cable|Conduit & Fittings|Breakers & Panels|Devices & Covers|Lighting|Boxes & Enclosures|Tools & Consumables|Gear & Equipment|Other";
   return fetch("/api/claude",{
     method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({model:"claude-sonnet-4-5",max_tokens:8192,messages:[{role:"user",content:[fileBlock,{type:"text",text:prompt}]}]})
@@ -582,21 +582,39 @@ function deleteInvoice(id){
 }
 
 function renderRecent(){
-  var wrap=document.getElementById("recwrap"),tb=document.getElementById("rectb");
+  var wrap=document.getElementById("recwrap");
   if(!DB.invoices.length){wrap.style.display="none";return;}
   wrap.style.display="block";
-  var rows=DB.invoices.slice().sort(function(a,b){return (b.date||"").localeCompare(a.date||"");}).slice(0,50);
-  tb.innerHTML=rows.map(function(inv){
-    return '<tr style="background:#fff"><td class="mono dim" style="font-size:11px">'+esc(inv.date)+'</td><td class="b">'+esc(inv.supplier)+'</td><td class="mono dim" style="font-size:11px">'+esc(inv.invoice_number||"—")+'</td><td style="color:#0891B2;font-size:11px">'+esc(inv.address||inv.jobsite||"—")+'</td><td>'+(inv.items||[]).length+'</td>'+
-      '<td style="white-space:nowrap"><button class="ibtn" style="margin-right:4px" data-view="'+inv.id+'">👁 View</button>'+
-      '<button class="ibtn" style="background:#FEF2F2;border-color:#FECACA;color:#DC2626" data-del="'+inv.id+'">🗑 Delete</button></td></tr>';
-  }).join("");
-  tb.querySelectorAll("[data-view]").forEach(function(btn){
-    btn.addEventListener("click",function(){openMod(this.getAttribute("data-view"));});
+  var sorted=DB.invoices.slice().sort(function(a,b){return (b.date||"").localeCompare(a.date||"");});
+  var groups={},groupOrder=[];
+  sorted.forEach(function(inv){
+    var d=inv.date||"No Date";
+    if(!groups[d]){groups[d]=[];groupOrder.push(d);}
+    groups[d].push(inv);
   });
-  tb.querySelectorAll("[data-del]").forEach(function(btn){
-    btn.addEventListener("click",function(e){e.stopPropagation();deleteInvoice(this.getAttribute("data-del"));});
+  var html="";
+  groupOrder.forEach(function(date,gi){
+    var invs=groups[date];
+    var dayTotal=invs.reduce(function(s,inv){return s+(inv.items||[]).reduce(function(a,it){return a+(it.total||0);},0);},0);
+    var cid="daycoll"+gi;
+    var rows=invs.map(function(inv,i){
+      return "<tr style='background:"+(i%2?"#F9FAFB":"#fff")+"'><td class='b'>"+esc(inv.supplier)+"</td><td class='mono dim' style='font-size:11px'>"+esc(inv.invoice_number||"—")+"</td><td style='color:#0891B2;font-size:11px'>"+esc(inv.address||inv.jobsite||"—")+"</td><td>"+(inv.items||[]).length+"</td><td style='font-size:11px;color:#9CA3AF'>"+esc(inv.uploadedBy||"—")+"</td><td style='white-space:nowrap'><button class='ibtn' style='margin-right:4px' data-view='"+inv.id+"'>👁 View</button><button class='ibtn' style='background:#FEF2F2;border-color:#FECACA;color:#DC2626' data-del='"+inv.id+"'>🗑</button></td></tr>";
+    }).join("");
+    html+="<div class='coll' id='"+cid+"' style='border-left-color:#2563EB;margin-bottom:6px'>"+
+      "<div class='coll-h' data-cid='"+cid+"'>"+
+        "<div><span class='coll-arr'>▶</span><span class='coll-ttl blue'>"+esc(date)+"</span>"+
+        "<span class='coll-bdg'>"+invs.length+" invoice"+(invs.length!==1?"s":"")+"</span></div>"+
+        "<div class='coll-rgt amber'>$"+dayTotal.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})+"</div>"+
+      "</div>"+
+      "<div class='coll-body'><table><thead><tr><th>Supplier</th><th>Invoice #</th><th>Address</th><th>Items</th><th>By</th><th></th></tr></thead><tbody>"+rows+"</tbody></table></div></div>";
   });
+  wrap.innerHTML="<div class='card'><div class='sec'>Invoices by Date</div>"+html+"</div>";
+  wrap.querySelectorAll(".coll-h").forEach(function(h){
+    h.addEventListener("click",function(){var el=document.getElementById(this.getAttribute("data-cid"));if(el)el.classList.toggle("open");});
+  });
+  wrap.querySelectorAll("[data-view]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();openMod(this.getAttribute("data-view"));});});
+  wrap.querySelectorAll("[data-del]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();deleteInvoice(this.getAttribute("data-del"));});});
+  if(groupOrder.length)document.getElementById("daycoll0").classList.add("open");
 }
 
 function getWeeks(){
