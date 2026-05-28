@@ -967,10 +967,12 @@ function syncFromAirtable(){
   .then(function(d){
     if(!d.ok)throw new Error(d.error||"Sync failed");
     var remoteInvs=d.data.invoices||[];
+    console.log("Airtable returned",remoteInvs.length,"invoices, local has",DB.invoices.length);
     // Filter out blank/invalid invoices from Airtable
     remoteInvs=remoteInvs.filter(function(inv){
       return inv.supplier&&inv.supplier.length>0&&inv.date&&inv.date.length>0;
     });
+    console.log("After filtering:",remoteInvs.length,"valid invoices");
     // Only update local DB if remote has real data
     if(remoteInvs.length>0){
       DB.invoices=remoteInvs;
