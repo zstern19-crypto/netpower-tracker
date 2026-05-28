@@ -1131,18 +1131,12 @@ window.addEventListener("DOMContentLoaded",function(){
     document.getElementById("cbtn").style.display="";
     document.getElementById("cc").style.display="none";
     document.getElementById("clear-pwd-input").value="";
+    // Wipe local immediately and reload — don't wait for Airtable
     dbWipe(function(){
-      setSyncLbl("⟳ Clearing Airtable…","#D97706");
-      fetch(API_URL+"?action=write",{
-        method:"POST",headers:atHeaders(),
-        body:JSON.stringify({invoices:[],items:{}})
-      }).then(function(){
-        flash("ok","✅ All data cleared — reloading…");
-        setTimeout(function(){location.reload();},1500);
-      }).catch(function(){
-        flash("ok","✅ Local data cleared — reloading…");
-        setTimeout(function(){location.reload();},1500);
-      });
+      flash("ok","✅ Local data cleared — reloading…");
+      // Fire Airtable wipe in background (don't wait)
+      try{fetch(API_URL+"?action=write",{method:"POST",headers:atHeaders(),body:JSON.stringify({invoices:[],items:{}})}).catch(function(){});}catch(e){}
+      setTimeout(function(){location.reload();},800);
     });
   });
   // Also allow Enter key in password field
