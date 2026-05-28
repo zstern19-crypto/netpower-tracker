@@ -91,8 +91,23 @@ export default async function handler(req, res) {
 
     } else if (action === "write") {
       const { invoices } = req.body || {};
+      // If empty invoices — delete everything in Airtable
       if (!invoices || !invoices.length) {
-        res.status(200).json({ ok: true, message: "nothing to write" });
+        let allIds = [];
+        let off = null;
+        do {
+          const ru = "https://api.airtable.com/v0/" + AT_BASE + "/" + encodeURIComponent(AT_TABLE) + "?pageSize=100" + (off ? "&offset=" + off : "");
+          const rr = await fetch(ru, { headers });
+          const dd = await rr.json();
+          (dd.records || []).forEach(r => allIds.push(r.id));
+          off = dd.offset || null;
+        } while (off);
+        for (let i = 0; i < allIds.length; i += 10) {
+          const batch = allIds.slice(i, i + 10);
+          const params = batch.map(id => "records[]=" + id).join("&");
+          await fetch("https://api.airtable.com/v0/" + AT_BASE + "/" + encodeURIComponent(AT_TABLE) + "?" + params, { method: "DELETE", headers });
+        }
+        res.status(200).json({ ok: true, deleted: allIds.length });
         return;
       }
 
