@@ -1398,11 +1398,33 @@ function renderSavedEstimates(){
 // ══════════════════════════════════════════════════════════
 var SPECS_CACHE = {};
 
+// Static electrical specs database
+var SPECS_DB = {
+  "wire": {full_name:"Non-Metallic Sheathed Cable (NM-B)",category:"Wire & Cable",common_uses:"Interior wiring in homes and commercial buildings for outlets, switches, lighting",specs:{"Voltage Rating":"600V","Temperature Rating":"90C dry / 75C wet","Conductor Material":"Copper","Insulation":"PVC with nylon jacket","Common Sizes":"14, 12, 10, 8, 6 AWG","UL Listing":"UL 719"},common_brands:["Southwire","Cerrowire","Encore Wire"],nec_code:"NEC Article 334",notes:"Cannot be used in conduit, exposed in attics if not protected, or in wet locations."},
+  "romex": {full_name:"Romex Non-Metallic Cable (NM-B)",category:"Wire & Cable",common_uses:"Residential branch circuit wiring for outlets, switches, and lighting",specs:{"Voltage Rating":"600V","Temperature Rating":"90C","Conductor":"Copper","Jacket":"PVC","Common Sizes":"14/2, 12/2, 10/2, 14/3, 12/3","Grounding":"Bare copper ground included"},common_brands:["Southwire","General Cable"],nec_code:"NEC Article 334",notes:"Ground wire must be connected at all terminations."},
+  "thhn": {full_name:"THHN/THWN-2 Building Wire",category:"Wire & Cable",common_uses:"Wiring in conduit for commercial and residential applications",specs:{"Voltage Rating":"600V","Temperature Rating":"90C dry, 75C wet","Insulation":"PVC with nylon jacket","Available Gauges":"22 AWG to 1000 kcmil","UL Listing":"UL 83"},common_brands:["Southwire","Encore Wire","General Cable"],nec_code:"NEC Article 310",notes:"Must be installed in conduit. Color coding required by NEC."},
+  "mc cable": {full_name:"Metal-Clad Cable (MC)",category:"Wire & Cable",common_uses:"Commercial and industrial wiring, exposed installations",specs:{"Voltage Rating":"600V","Temperature Rating":"90C","Armor":"Aluminum interlocked","Conductors":"THHN/THWN-2 copper","Common Sizes":"14/2, 12/2, 10/2, 8/3","UL Listing":"UL 1569"},common_brands:["AFC Cable","Southwire","Encore"],nec_code:"NEC Article 330",notes:"Anti-short bushing required at all terminations."},
+  "breaker": {full_name:"Circuit Breaker",category:"Breakers & Panels",common_uses:"Overcurrent protection for branch circuits in electrical panels",specs:{"Standard Sizes":"15A, 20A, 30A, 40A, 50A, 60A, 100A","Voltage":"120/240V","Interrupt Rating":"10,000 AIC standard","Pole":"Single or double pole","Trip Type":"Thermal-magnetic"},common_brands:["Square D","Eaton","Siemens","Leviton"],nec_code:"NEC Article 240",notes:"Must match panel brand. AFCI/GFCI required in certain locations per NEC 210.12."},
+  "panel": {full_name:"Electrical Load Center / Panel",category:"Breakers & Panels",common_uses:"Main distribution panel for electrical circuits in buildings",specs:{"Common Sizes":"100A, 150A, 200A, 400A","Spaces":"12 to 42 circuit spaces","Voltage":"120/240V single phase","Grounding":"Neutral/ground bar included"},common_brands:["Square D","Eaton","Siemens","Leviton"],nec_code:"NEC Article 408",notes:"Working clearance of 36 inches required in front per NEC 110.26."},
+  "outlet": {full_name:"Electrical Outlet / Receptacle",category:"Devices & Covers",common_uses:"Point of connection for electrical devices and appliances",specs:{"Voltage":"120V","Amperage":"15A or 20A","NEMA Config":"5-15R (15A) or 5-20R (20A)","UL Listing":"UL 498"},common_brands:["Leviton","Hubbell","Pass & Seymour","Eaton"],nec_code:"NEC Article 406",notes:"GFCI required within 6 ft of water sources, garages, outdoors per NEC 210.8."},
+  "gfci": {full_name:"GFCI Receptacle",category:"Devices & Covers",common_uses:"Ground fault protection in wet or damp locations",specs:{"Voltage":"120V","Amperage":"15A or 20A","Trip Level":"4 to 6 mA","Response Time":"1/40 second","UL Listing":"UL 943"},common_brands:["Leviton","Hubbell","Pass & Seymour"],nec_code:"NEC 210.8",notes:"Required in bathrooms, kitchens, garages, outdoors, crawl spaces, and near pools."},
+  "switch": {full_name:"Single-Pole Light Switch",category:"Devices & Covers",common_uses:"Control of lighting and fans from one location",specs:{"Voltage":"120/277V","Amperage":"15A or 20A","UL Listing":"UL 20"},common_brands:["Leviton","Lutron","Hubbell"],nec_code:"NEC Article 404",notes:"3-way switches required when controlling from two locations. Must be grounded."},
+  "conduit": {full_name:"Electrical Metallic Tubing (EMT)",category:"Conduit & Fittings",common_uses:"Protection and routing of electrical wiring in commercial and residential",specs:{"Material":"Galvanized steel","Trade Sizes":"1/2 in to 4 in","Length":"10 ft standard","UL Listing":"UL 797"},common_brands:["Allied Tube","Wheatland","Triangle"],nec_code:"NEC Article 358",notes:"Must be supported every 10 ft and within 3 ft of each box."},
+  "pvc conduit": {full_name:"PVC Schedule 40/80 Conduit",category:"Conduit & Fittings",common_uses:"Underground, wet locations, and corrosive environments",specs:{"Material":"PVC plastic","Schedule":"40 standard or 80 heavy duty","Trade Sizes":"1/2 in to 6 in","Temp Rating":"-20F to 140F","UL Listing":"UL 651"},common_brands:["Cantex","Carlon","Allied"],nec_code:"NEC Article 352",notes:"Use expansion couplings for long runs. Minimum cover depth varies by location."},
+  "junction box": {full_name:"Electrical Junction Box",category:"Boxes & Enclosures",common_uses:"Enclosure for wire splices and connections",specs:{"Material":"Steel or plastic","Common Sizes":"4 in square, 4 in octagon","Knockouts":"Various trade sizes","UL Listing":"UL 514A"},common_brands:["Raco","Steel City","Carlon"],nec_code:"NEC Article 314",notes:"Must remain accessible at all times. Fill calculation required per NEC 314.16."},
+  "wire nut": {full_name:"Wire Connector (Wire Nut)",category:"Tools & Consumables",common_uses:"Making safe wire splices in electrical boxes",specs:{"Sizes":"Yellow (12-14 AWG), Red (10-14 AWG), Orange (14 AWG)","Material":"Thermoplastic shell, steel spring","Voltage Rating":"600V","UL Listing":"UL 486C"},common_brands:["Ideal","3M","Buchanan"],nec_code:"NEC Article 110.14",notes:"Match size to wire gauge. Twist clockwise until secure."},
+  "staple": {full_name:"Cable Staples / Straps",category:"Tools & Consumables",common_uses:"Securing NM cable and other wiring to framing",specs:{"Common Sizes":"3/8 in, 1/2 in, 9/16 in, 5/8 in","Material":"Steel or plastic"},common_brands:["Gardner Bender","Arlington","Caddy"],nec_code:"NEC 334.30",notes:"NM cable must be supported every 4.5 ft and within 12 in of boxes."},
+  "light": {full_name:"Light Fixture / Luminaire",category:"Lighting",common_uses:"Providing illumination in residential and commercial spaces",specs:{"Voltage":"120V or 277V","Lamp Types":"LED, fluorescent, incandescent","UL Listing":"UL 1598"},common_brands:["Lithonia","Cooper","Philips","GE"],nec_code:"NEC Article 410",notes:"Must be rated for wet/damp locations where applicable."},
+  "recessed": {full_name:"Recessed Downlight / Can Light",category:"Lighting",common_uses:"Recessed ceiling lighting in residential and commercial buildings",specs:{"Housing":"IC rated or non-IC rated","Voltage":"120V","Wattage":"9-75W typical"},common_brands:["Halo","Lithonia","Cooper Lighting","Juno"],nec_code:"NEC 410.116",notes:"IC-rated required when insulation contact expected."},
+  "disconnect": {full_name:"Safety Disconnect Switch",category:"Gear & Equipment",common_uses:"Service entrance disconnect, HVAC disconnect, motor disconnect",specs:{"Amperage":"30A, 60A, 100A, 200A","Voltage":"240V or 600V","NEMA Rating":"1 indoor or 3R outdoor","UL Listing":"UL 98"},common_brands:["Square D","Eaton","Siemens"],nec_code:"NEC Article 430 / 440",notes:"Must be within sight of equipment served."},
+  "ground rod": {full_name:"Copper-Clad Ground Rod",category:"Gear & Equipment",common_uses:"Grounding electrode for electrical service entrance",specs:{"Length":"8 ft standard","Diameter":"5/8 in or 3/4 in","Material":"Copper-bonded steel","UL Listing":"UL 467"},common_brands:["Erico","Harger","Burndy"],nec_code:"NEC 250.52",notes:"Minimum two ground rods required unless single rod tests below 25 ohms."}
+};
+
 function openSpecs(itemName){
   document.getElementById("specs-title").textContent = itemName;
   document.getElementById("specs-sub").textContent = "Electrical material specifications";
-  document.getElementById("specs-loading").style.display = "block";
-  document.getElementById("specs-content").style.display = "none";
+  document.getElementById("specs-loading").style.display = "none";
+  document.getElementById("specs-content").style.display = "block";
   document.getElementById("specs-mod").style.display = "flex";
 
   // Check cache first
@@ -1411,34 +1433,36 @@ function openSpecs(itemName){
     return;
   }
 
-  // Call Claude API
-  var prompt = "You are an electrical materials expert. Provide detailed technical specifications for this electrical material: \"" + itemName + "\"\n\nReturn ONLY a JSON object with this structure (no markdown, no explanation):\n{\n  \"full_name\": \"complete product name\",\n  \"category\": \"product category\",\n  \"common_uses\": \"what it is used for\",\n  \"specs\": {\n    \"key spec name\": \"value\",\n    \"another spec\": \"value\"\n  },\n  \"common_brands\": [\"brand1\", \"brand2\"],\n  \"nec_code\": \"relevant NEC code if applicable or null\",\n  \"notes\": \"any important installation or safety notes\"\n}\n\nInclude relevant specs like: voltage rating, amperage, wire gauge, conduit size, material, temperature rating, dimensions, UL listing, etc. Only include specs that are relevant to this specific item.";
+  // Search static DB
+  var nl = itemName.toLowerCase();
+  var match = null;
+  var bestScore = 0;
 
-  fetch("/api/claude",{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({
-      model:"claude-sonnet-4-6",
-      max_tokens:1000,
-      messages:[{role:"user",content:prompt}]
-    })
-  }).then(function(r){return r.json();})
-  .then(function(d){
-    if(d.error)throw new Error(d.error.message||"API error");
-    var txt=((d.content&&d.content.find(function(b){return b.type==="text";}))||{}).text||"";
-    txt=txt.replace(/^```[a-z]*\n?/i,"").replace(/```$/,"").trim();
-    var specs=JSON.parse(txt);
-    SPECS_CACHE[itemName]=specs;
-    renderSpecs(specs);
-  }).catch(function(e){
-    document.getElementById("specs-loading").style.display="none";
-    document.getElementById("specs-content").style.display="block";
-    document.getElementById("specs-content").innerHTML=
-      "<div style='text-align:center;padding:30px;color:#DC2626'>"+
-        "<div style='font-size:28px;margin-bottom:10px'>⚠️</div>"+
-        "<div style='font-size:13px'>Could not load specs: "+esc(e.message)+"</div>"+
-      "</div>";
+  Object.keys(SPECS_DB).forEach(function(key){
+    var score = 0;
+    if(nl === key) score = 100;
+    else if(nl.indexOf(key) !== -1) score = 60 + key.length;
+    else if(key.indexOf(nl) !== -1) score = 50 + nl.length;
+    else {
+      var kWords = key.split(" "), nWords = nl.split(" ");
+      nWords.forEach(function(w){ if(w.length > 2 && key.indexOf(w) !== -1) score += 15; });
+      kWords.forEach(function(w){ if(w.length > 2 && nl.indexOf(w) !== -1) score += 15; });
+    }
+    if(score > bestScore){ bestScore = score; match = SPECS_DB[key]; }
   });
+
+  if(match && bestScore >= 15){
+    SPECS_CACHE[itemName] = match;
+    renderSpecs(match);
+  } else {
+    document.getElementById("specs-content").innerHTML =
+      "<div style='text-align:center;padding:40px 20px;color:#6B7280'>" +
+        "<div style='font-size:32px;margin-bottom:12px'>🔍</div>" +
+        "<div style='font-size:14px;font-weight:600;margin-bottom:8px'>No specs found for:</div>" +
+        "<div style='font-size:13px;color:#2563EB;font-weight:500'>"+esc(itemName)+"</div>" +
+        "<div style='font-size:12px;margin-top:12px;color:#9CA3AF'>Spec database covers common electrical materials.<br>More items will be added over time.</div>" +
+      "</div>";
+  }
 }
 
 function renderSpecs(specs){
