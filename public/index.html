@@ -872,6 +872,10 @@ function renderPrices(){
   document.querySelectorAll("#price-cats tbody tr").forEach(function(tr){
     tr.addEventListener("click",function(){drillItem(this.getAttribute("data-name"));});
   });
+  // Attach spec buttons
+  document.querySelectorAll("#price-cats .spec-btn").forEach(function(btn){
+    btn.addEventListener("click",function(e){e.stopPropagation();openSpecs(this.getAttribute("data-spec"));});
+  });
   // Auto-open if only one category or if searching
   if(catsWithData.length===1||qlo){
     document.querySelectorAll("#price-cats .coll").forEach(function(el){el.classList.add("open");});
@@ -1389,6 +1393,108 @@ function renderSavedEstimates(){
   });
 }
 
+// ══════════════════════════════════════════════════════════
+// SPECS LOOKUP
+// ══════════════════════════════════════════════════════════
+var SPECS_CACHE = {};
+
+function openSpecs(itemName){
+  document.getElementById("specs-title").textContent = itemName;
+  document.getElementById("specs-sub").textContent = "Electrical material specifications";
+  document.getElementById("specs-loading").style.display = "block";
+  document.getElementById("specs-content").style.display = "none";
+  document.getElementById("specs-mod").style.display = "flex";
+
+  // Check cache first
+  if(SPECS_CACHE[itemName]){
+    renderSpecs(SPECS_CACHE[itemName]);
+    return;
+  }
+
+  // Call Claude API
+  var prompt = "You are an electrical materials expert. Provide detailed technical specifications for this electrical material: \"" + itemName + "\"\n\nReturn ONLY a JSON object with this structure (no markdown, no explanation):\n{\n  \"full_name\": \"complete product name\",\n  \"category\": \"product category\",\n  \"common_uses\": \"what it is used for\",\n  \"specs\": {\n    \"key spec name\": \"value\",\n    \"another spec\": \"value\"\n  },\n  \"common_brands\": [\"brand1\", \"brand2\"],\n  \"nec_code\": \"relevant NEC code if applicable or null\",\n  \"notes\": \"any important installation or safety notes\"\n}\n\nInclude relevant specs like: voltage rating, amperage, wire gauge, conduit size, material, temperature rating, dimensions, UL listing, etc. Only include specs that are relevant to this specific item.";
+
+  fetch("/api/claude",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      model:"claude-sonnet-4-6",
+      max_tokens:1000,
+      messages:[{role:"user",content:prompt}]
+    })
+  }).then(function(r){return r.json();})
+  .then(function(d){
+    if(d.error)throw new Error(d.error.message||"API error");
+    var txt=((d.content&&d.content.find(function(b){return b.type==="text";}))||{}).text||"";
+    txt=txt.replace(/^```[a-z]*\n?/i,"").replace(/```$/,"").trim();
+    var specs=JSON.parse(txt);
+    SPECS_CACHE[itemName]=specs;
+    renderSpecs(specs);
+  }).catch(function(e){
+    document.getElementById("specs-loading").style.display="none";
+    document.getElementById("specs-content").style.display="block";
+    document.getElementById("specs-content").innerHTML=
+      "<div style='text-align:center;padding:30px;color:#DC2626'>"+
+        "<div style='font-size:28px;margin-bottom:10px'>⚠️</div>"+
+        "<div style='font-size:13px'>Could not load specs: "+esc(e.message)+"</div>"+
+      "</div>";
+  });
+}
+
+function renderSpecs(specs){
+  document.getElementById("specs-loading").style.display="none";
+  document.getElementById("specs-title").textContent = specs.full_name || document.getElementById("specs-title").textContent;
+  document.getElementById("specs-sub").textContent = specs.category || "";
+
+  var html = "";
+
+  // Common uses
+  if(specs.common_uses){
+    html += "<div style='background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px;color:#1E40AF'>" +
+      "<span style='font-weight:600'>Used for: </span>" + esc(specs.common_uses) + "</div>";
+  }
+
+  // Specs table
+  if(specs.specs && Object.keys(specs.specs).length){
+    html += "<div class='spec-section'>Technical Specifications</div>";
+    html += "<div style='border:1px solid #E5E7EB;border-radius:8px;overflow:hidden;margin-bottom:14px'>";
+    Object.keys(specs.specs).forEach(function(k,i){
+      html += "<div class='spec-row' style='padding:8px 14px;background:"+(i%2?"#F9FAFB":"#fff")+"'>" +
+        "<span class='spec-key'>"+esc(k)+"</span>" +
+        "<span class='spec-val'>"+esc(specs.specs[k])+"</span>" +
+      "</div>";
+    });
+    html += "</div>";
+  }
+
+  // Common brands
+  if(specs.common_brands && specs.common_brands.length){
+    html += "<div class='spec-section'>Common Brands</div>";
+    html += "<div style='display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px'>";
+    specs.common_brands.forEach(function(b){
+      html += "<span style='background:#F3F4F6;border:1px solid #E5E7EB;border-radius:6px;padding:3px 10px;font-size:12px;font-weight:500'>"+esc(b)+"</span>";
+    });
+    html += "</div>";
+  }
+
+  // NEC Code
+  if(specs.nec_code){
+    html += "<div class='spec-section'>NEC Reference</div>";
+    html += "<div style='background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;padding:10px 14px;font-size:13px;color:#166534;margin-bottom:14px'>" +
+      "📖 " + esc(specs.nec_code) + "</div>";
+  }
+
+  // Notes
+  if(specs.notes){
+    html += "<div class='spec-section'>Installation Notes</div>";
+    html += "<div style='background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:10px 14px;font-size:13px;color:#92400E;margin-bottom:14px'>" +
+      "⚠️ " + esc(specs.notes) + "</div>";
+  }
+
+  document.getElementById("specs-content").innerHTML = html;
+  document.getElementById("specs-content").style.display = "block";
+}
+
 // ── Init ──────────────────────────────────────────────────────────────
 window.addEventListener("DOMContentLoaded",function(){
   // Tabs
@@ -1447,6 +1553,8 @@ window.addEventListener("DOMContentLoaded",function(){
   });
   // Modal close
   document.getElementById("mclose").addEventListener("click",function(){document.getElementById("mod").classList.remove("on");});
+  document.getElementById("specs-close").addEventListener("click",function(){document.getElementById("specs-mod").style.display="none";});
+  document.getElementById("specs-mod").addEventListener("click",function(e){if(e.target===this)this.style.display="none";});
   document.getElementById("est-gen-btn").addEventListener("click",generateEstimate);
   document.getElementById("est-save-btn").addEventListener("click",saveEstimate);
   document.getElementById("est-print-btn").addEventListener("click",function(){window.print();});
@@ -1502,6 +1610,28 @@ window.addEventListener("DOMContentLoaded",function(){
   // Check login on start
   if(checkLogin())loadApp();
 });
+
+
 </script>
+
+<!-- Specs Modal -->
+<div id="specs-mod" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:2000;align-items:center;justify-content:center;padding:16px">
+  <div style="background:#fff;border-radius:14px;padding:0;max-width:620px;width:100%;max-height:88vh;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,.2);display:flex;flex-direction:column">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid #E5E7EB;background:#F8F9FA">
+      <div>
+        <div style="font-size:16px;font-weight:700" id="specs-title">Product Specs</div>
+        <div style="font-size:11px;color:#9CA3AF;margin-top:2px" id="specs-sub"></div>
+      </div>
+      <button id="specs-close" style="border:1px solid #E5E7EB;border-radius:6px;padding:4px 14px;background:#fff;font-size:13px;color:#6B7280;cursor:pointer">Close</button>
+    </div>
+    <div id="specs-body" style="padding:20px;overflow-y:auto;flex:1">
+      <div id="specs-loading" style="text-align:center;padding:40px 20px;color:#6B7280">
+        <div style="font-size:32px;margin-bottom:12px">🔍</div>
+        <div style="font-size:13px">Looking up specs...</div>
+      </div>
+      <div id="specs-content" style="display:none"></div>
+    </div>
+  </div>
+</div>
 </body>
 </html>
