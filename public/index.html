@@ -188,6 +188,7 @@ tr.hov:hover td{background:#F9FAFB;cursor:pointer}
   <button class="tab" id="t-prices">💲 Prices</button>
   <button class="tab" id="t-jobsite">🏗 Jobsites</button>
   <button class="tab" id="t-category">🗂 Categories</button>
+  <button class="tab" id="t-estimate">📋 Estimate</button>
 </div>
 
 <div id="bdy">
@@ -258,6 +259,75 @@ tr.hov:hover td{background:#F9FAFB;cursor:pointer}
   <div id="kc2" style="display:none">
     <div class="card" id="ksum"></div>
     <div id="klist"></div>
+  </div>
+</div>
+
+
+<!-- ESTIMATE -->
+<div class="pnl" id="p-estimate">
+  <div style="margin-bottom:14px">
+    <div style="font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Recent Estimates</div>
+    <div id="est-saved-list">
+      <div class="empty" style="padding:20px 0;font-size:12px"><div style="font-size:28px;margin-bottom:8px">📋</div>No saved estimates yet</div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="sec">New Estimate</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+      <div style="flex:2;min-width:180px">
+        <label style="display:block;font-size:10px;color:#6B7280;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px">Job Name / Jobsite</label>
+        <input class="inp" id="est-job" placeholder="e.g. 417 Carroll Street — Unit 4B">
+      </div>
+      <div style="flex:1;min-width:120px">
+        <label style="display:block;font-size:10px;color:#6B7280;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px">Date</label>
+        <input class="inp" id="est-date" type="date">
+      </div>
+    </div>
+    <label style="display:block;font-size:10px;color:#6B7280;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px">Materials Needed</label>
+    <textarea id="est-input" style="width:100%;border:1px solid #E5E7EB;border-radius:7px;padding:10px 12px;font-size:13px;font-family:inherit;outline:none;resize:vertical;min-height:90px" placeholder="One per line, e.g:&#10;10 12/2 wire&#10;5 20A breaker&#10;2 outlet box&#10;1 200A panel"></textarea>
+    <div style="font-size:11px;color:#9CA3AF;margin-top:5px">Prices auto-filled from your most recent invoices. Items not found will be flagged.</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;padding:12px;background:#F9FAFB;border:1px solid #E5E7EB;border-radius:8px">
+      <div style="font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.8px;width:100%;margin-bottom:4px">Labor</div>
+      <div style="flex:1;min-width:120px">
+        <label style="display:block;font-size:10px;color:#6B7280;margin-bottom:3px">Hours</label>
+        <input class="inp" id="est-labor-hrs" type="number" min="0" step="0.5" placeholder="0" style="padding:6px 10px;font-size:13px">
+      </div>
+      <div style="flex:1;min-width:120px">
+        <label style="display:block;font-size:10px;color:#6B7280;margin-bottom:3px">Rate ($/hr)</label>
+        <input class="inp" id="est-labor-rate" type="number" min="0" step="1" placeholder="0.00" style="padding:6px 10px;font-size:13px">
+      </div>
+      <div style="flex:2;min-width:160px">
+        <label style="display:block;font-size:10px;color:#6B7280;margin-bottom:3px">Description</label>
+        <input class="inp" id="est-labor-desc" type="text" placeholder="e.g. Electrical installation" style="padding:6px 10px;font-size:13px">
+      </div>
+    </div>
+    <button id="est-gen-btn" style="background:#2563EB;color:#fff;border:none;border-radius:7px;padding:9px 18px;font-size:13px;font-weight:600;margin-top:10px;cursor:pointer">⚡ Generate Estimate</button>
+  </div>
+  <div id="est-result" style="display:none;margin-top:14px">
+    <div class="card" style="padding:0;overflow:hidden">
+      <div style="background:#F8F9FA;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #E5E7EB">
+        <div class="sec" style="margin:0" id="est-result-title">Estimate</div>
+        <div style="display:flex;gap:8px">
+          <button id="est-save-btn" style="border:1px solid #E5E7EB;border-radius:6px;padding:4px 12px;font-size:11px;color:#6B7280;background:#fff;cursor:pointer">💾 Save</button>
+          <button id="est-print-btn" style="border:1px solid #BFDBFE;border-radius:6px;padding:4px 12px;font-size:11px;color:#2563EB;background:#EFF6FF;cursor:pointer">🖨 Print</button>
+        </div>
+      </div>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead>
+            <tr>
+              <th style="padding:7px 12px;text-align:left;color:#9CA3AF;font-weight:600;border-bottom:1px solid #E5E7EB;font-size:10px;text-transform:uppercase;letter-spacing:.8px;background:#FAFAFA">Material</th>
+              <th style="padding:7px 12px;text-align:left;color:#9CA3AF;font-weight:600;border-bottom:1px solid #E5E7EB;font-size:10px;text-transform:uppercase;letter-spacing:.8px;background:#FAFAFA">Price Source</th>
+              <th style="padding:7px 12px;text-align:center;color:#9CA3AF;font-weight:600;border-bottom:1px solid #E5E7EB;font-size:10px;text-transform:uppercase;letter-spacing:.8px;background:#FAFAFA">Qty</th>
+              <th style="padding:7px 12px;text-align:right;color:#9CA3AF;font-weight:600;border-bottom:1px solid #E5E7EB;font-size:10px;text-transform:uppercase;letter-spacing:.8px;background:#FAFAFA">Unit $</th>
+              <th style="padding:7px 12px;text-align:right;color:#9CA3AF;font-weight:600;border-bottom:1px solid #E5E7EB;font-size:10px;text-transform:uppercase;letter-spacing:.8px;background:#FAFAFA">Total</th>
+            </tr>
+          </thead>
+          <tbody id="est-tbody"></tbody>
+        </table>
+      </div>
+      <div id="est-totals" style="padding:12px 16px;background:#F8F9FA;border-top:2px solid #E5E7EB"></div>
+    </div>
   </div>
 </div>
 
@@ -404,7 +474,7 @@ function flash(type,msg){
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────
-var TABS=["upload","prices","jobsite","category"];
+var TABS=["upload","prices","jobsite","category","estimate"];
 function showTab(name){
   TABS.forEach(function(t){
     var panel=document.getElementById("p-"+t);
@@ -1143,6 +1213,182 @@ function syncFromAirtable(){
   });
 }
 
+// ══════════════════════════════════════════════════════════
+// ESTIMATOR
+// ══════════════════════════════════════════════════════════
+var SAVED_ESTIMATES = [];
+var EST_ROWS = [];
+
+function lookupItemPrice(name){
+  // Search DB.items for best match — most recent week price
+  var nl = name.toLowerCase().trim();
+  var bestMatch = null, bestScore = 0;
+  Object.keys(DB.items).forEach(function(k){
+    var score = 0;
+    if(k === nl) score = 100;
+    else if(k.indexOf(nl) !== -1) score = 50 + nl.length;
+    else if(nl.indexOf(k) !== -1) score = 40 + k.length;
+    else {
+      // Word overlap scoring
+      var kWords = k.split(" "), nWords = nl.split(" ");
+      nWords.forEach(function(w){ if(w.length > 2 && k.indexOf(w) !== -1) score += 10; });
+      kWords.forEach(function(w){ if(w.length > 2 && nl.indexOf(w) !== -1) score += 10; });
+    }
+    if(score > bestScore){ bestScore = score; bestMatch = k; }
+  });
+  if(!bestMatch || bestScore < 10) return {found:false, price:0, supplier:"", date:"", itemName:name};
+  var it = DB.items[bestMatch];
+  var weeks = Object.keys(it.weeks).sort();
+  var lastWk = weeks[weeks.length-1] || "";
+  var wkData = lastWk ? it.weeks[lastWk] : {};
+  // Find which supplier/invoice this came from
+  var srcInv = DB.invoices.filter(function(inv){
+    return inv.weekKey === lastWk && (inv.items||[]).some(function(x){
+      return x.name.toLowerCase().trim() === bestMatch;
+    });
+  })[0];
+  return {
+    found: true,
+    price: wkData.unitPrice || 0,
+    supplier: srcInv ? srcInv.supplier : "",
+    date: srcInv ? srcInv.date : lastWk,
+    itemName: it.name
+  };
+}
+
+function generateEstimate(){
+  var lines = (document.getElementById("est-input").value||"").split("\n").filter(function(l){return l.trim();});
+  if(!lines.length){ flash("err","Enter at least one material."); return; }
+  EST_ROWS = [];
+  lines.forEach(function(line){
+    var parts = line.trim().match(/^(\d+(?:\.\d+)?)\s+(.+)$/);
+    var qty = 1, name = line.trim();
+    if(parts){ qty = parseFloat(parts[1]); name = parts[2]; }
+    var p = lookupItemPrice(name);
+    EST_ROWS.push({name:name, qty:qty, unitPrice:p.price, supplier:p.supplier, date:p.date, found:p.found, matchedName:p.itemName});
+  });
+  var job = document.getElementById("est-job").value || "Estimate";
+  document.getElementById("est-result-title").textContent = "Estimate — " + job;
+  renderEstimateTable();
+  document.getElementById("est-result").style.display = "block";
+}
+
+function renderEstimateTable(){
+  var tbody = document.getElementById("est-tbody");
+  tbody.innerHTML = EST_ROWS.map(function(row, i){
+    var sub = row.unitPrice * row.qty;
+    var srcHtml = row.found
+      ? '<span style="color:#16A34A;font-size:10px;font-weight:600">✓ Found</span><span style="display:block;font-size:10px;color:#9CA3AF">' + esc(row.supplier) + " · " + esc(row.date) + "</span>"
+      : '<span style="color:#F59E0B;font-size:10px;font-weight:600">⚠ No history</span><span style="display:block;font-size:10px;color:#9CA3AF">Enter price manually</span>';
+    var priceHtml = row.found
+      ? '<span class="mono" style="font-size:12px">$' + row.unitPrice.toFixed(2) + "</span>"
+      : '<input type="number" step="0.01" min="0" placeholder="0.00" value="' + (row.unitPrice||"") + '" data-pidx="' + i + '" oninput="updateEstPrice(this)" style="width:70px;border:1px solid #E5E7EB;border-radius:5px;padding:3px 6px;font-size:12px;font-family:inherit;text-align:right;outline:none">';
+    return "<tr style='background:" + (i%2?"#F9FAFB":"#fff") + "'>" +
+      "<td style='padding:8px 12px;font-weight:600'>" + esc(row.name) + (row.found && row.matchedName !== row.name ? '<span style="display:block;font-size:10px;color:#9CA3AF">matched: ' + esc(row.matchedName) + "</span>" : "") + "</td>" +
+      "<td style='padding:8px 12px'>" + srcHtml + "</td>" +
+      "<td style='padding:8px 12px;text-align:center'><input type='number' step='0.5' min='0' value='" + row.qty + "' data-idx='" + i + "' oninput='updateEstQty(this)' style='width:55px;border:1px solid #E5E7EB;border-radius:5px;padding:3px 6px;font-size:12px;font-family:inherit;text-align:center;outline:none'></td>" +
+      "<td style='padding:8px 12px;text-align:right'>" + priceHtml + "</td>" +
+      "<td style='padding:8px 12px;text-align:right;font-family:monospace;font-weight:700;color:#D97706'>$" + sub.toFixed(2) + "</td>" +
+    "</tr>";
+  }).join("");
+  renderEstimateTotals();
+}
+
+function renderEstimateTotals(){
+  var matTotal = EST_ROWS.reduce(function(s,r){return s + r.unitPrice * r.qty;}, 0);
+  var laborHrs = parseFloat((document.getElementById("est-labor-hrs")||{}).value)||0;
+  var laborRate = parseFloat((document.getElementById("est-labor-rate")||{}).value)||0;
+  var laborTotal = laborHrs * laborRate;
+  var grandTotal = matTotal + laborTotal;
+  var missing = EST_ROWS.filter(function(r){return !r.found || r.unitPrice === 0;}).length;
+  var html = "<div style='display:flex;justify-content:space-between;padding:4px 0;font-size:13px'>" +
+      "<span style='color:#6B7280'>Materials</span>" +
+      "<span style='font-family:monospace;font-weight:600'>$" + matTotal.toFixed(2) + "</span>" +
+    "</div>";
+  if(laborTotal > 0){
+    var desc = (document.getElementById("est-labor-desc")||{}).value || "Labor";
+    html += "<div style='display:flex;justify-content:space-between;padding:4px 0;font-size:13px'>" +
+      "<span style='color:#6B7280'>" + esc(desc) + " (" + laborHrs + " hrs @ $" + laborRate.toFixed(2) + "/hr)</span>" +
+      "<span style='font-family:monospace;font-weight:600'>$" + laborTotal.toFixed(2) + "</span>" +
+    "</div>";
+  }
+  html += "<div style='display:flex;justify-content:space-between;padding:8px 0 4px;font-size:15px;font-weight:700;color:#2563EB;border-top:1px solid #E5E7EB;margin-top:6px'>" +
+      "<span>ESTIMATE TOTAL</span>" +
+      "<span style='font-family:monospace'>$" + grandTotal.toFixed(2) + "</span>" +
+    "</div>" +
+    (missing ? "<div style='font-size:11px;color:#F59E0B;margin-top:6px'>⚠ " + missing + " item" + (missing>1?"s":"") + " without price history — enter prices manually for accurate total.</div>" : "");
+  document.getElementById("est-totals").innerHTML = html;
+}
+
+function updateEstQty(inp){
+  var idx = parseInt(inp.getAttribute("data-idx"));
+  EST_ROWS[idx].qty = parseFloat(inp.value)||0;
+  renderEstimateTotals();
+  // Update total cell
+  var rows = document.getElementById("est-tbody").querySelectorAll("tr");
+  if(rows[idx]){
+    var cells = rows[idx].querySelectorAll("td");
+    var lastCell = cells[cells.length-1];
+    if(lastCell) lastCell.textContent = "$" + (EST_ROWS[idx].unitPrice * EST_ROWS[idx].qty).toFixed(2);
+  }
+}
+
+function updateEstPrice(inp){
+  var idx = parseInt(inp.getAttribute("data-pidx"));
+  EST_ROWS[idx].unitPrice = parseFloat(inp.value)||0;
+  renderEstimateTotals();
+  var rows = document.getElementById("est-tbody").querySelectorAll("tr");
+  if(rows[idx]){
+    var cells = rows[idx].querySelectorAll("td");
+    var lastCell = cells[cells.length-1];
+    if(lastCell) lastCell.textContent = "$" + (EST_ROWS[idx].unitPrice * EST_ROWS[idx].qty).toFixed(2);
+  }
+}
+
+function saveEstimate(){
+  var job = document.getElementById("est-job").value || "Estimate";
+  var date = document.getElementById("est-date").value || new Date().toISOString().slice(0,10);
+  var matTotal = EST_ROWS.reduce(function(s,r){return s+r.unitPrice*r.qty;},0);
+  var laborHrs = parseFloat(document.getElementById("est-labor-hrs").value)||0;
+  var laborRate = parseFloat(document.getElementById("est-labor-rate").value)||0;
+  var laborDesc = document.getElementById("est-labor-desc").value||"Labor";
+  var total = matTotal + laborHrs*laborRate;
+  SAVED_ESTIMATES.unshift({id:mkId(), job:job, date:date, rows:JSON.parse(JSON.stringify(EST_ROWS)), total:total, laborHrs:laborHrs, laborRate:laborRate, laborDesc:laborDesc});
+  try{localStorage.setItem("np_estimates",JSON.stringify(SAVED_ESTIMATES));}catch(e){}
+  renderSavedEstimates();
+  flash("ok","✅ Estimate saved — " + job);
+}
+
+function renderSavedEstimates(){
+  var el = document.getElementById("est-saved-list");
+  if(!SAVED_ESTIMATES.length){
+    el.innerHTML = '<div class="empty" style="padding:20px 0;font-size:12px"><div style="font-size:28px;margin-bottom:8px">📋</div>No saved estimates yet</div>';
+    return;
+  }
+  el.innerHTML = SAVED_ESTIMATES.map(function(est){
+    return '<div style="background:#fff;border:1px solid #E5E7EB;border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;cursor:pointer" data-estid="'+est.id+'" class="est-saved-item">'+
+      '<div>'+
+        '<div style="font-size:13px;font-weight:600">'+esc(est.job)+'</div>'+
+        '<div style="font-size:11px;color:#9CA3AF;margin-top:2px">'+esc(est.date)+' · '+est.rows.length+' items</div>'+
+      '</div>'+
+      '<div style="font-family:monospace;font-size:14px;font-weight:700;color:#D97706">$'+est.total.toFixed(2)+'</div>'+
+    '</div>';
+  }).join("");
+  el.querySelectorAll(".est-saved-item").forEach(function(item){
+    item.addEventListener("click",function(){
+      var id = this.getAttribute("data-estid");
+      var est = SAVED_ESTIMATES.find(function(e){return e.id===id;});
+      if(!est)return;
+      EST_ROWS = JSON.parse(JSON.stringify(est.rows));
+      document.getElementById("est-job").value = est.job;
+      document.getElementById("est-date").value = est.date;
+      document.getElementById("est-result-title").textContent = "Estimate — " + est.job;
+      renderEstimateTable();
+      document.getElementById("est-result").style.display = "block";
+    });
+  });
+}
+
 // ── Init ──────────────────────────────────────────────────────────────
 window.addEventListener("DOMContentLoaded",function(){
   // Tabs
@@ -1201,6 +1447,18 @@ window.addEventListener("DOMContentLoaded",function(){
   });
   // Modal close
   document.getElementById("mclose").addEventListener("click",function(){document.getElementById("mod").classList.remove("on");});
+  document.getElementById("est-gen-btn").addEventListener("click",generateEstimate);
+  document.getElementById("est-save-btn").addEventListener("click",saveEstimate);
+  document.getElementById("est-print-btn").addEventListener("click",function(){window.print();});
+  ["est-labor-hrs","est-labor-rate","est-labor-desc"].forEach(function(id){
+    var el=document.getElementById(id);
+    if(el)el.addEventListener("input",function(){if(EST_ROWS.length)renderEstimateTotals();});
+  });
+  // Load saved estimates
+  try{var se=localStorage.getItem("np_estimates");if(se)SAVED_ESTIMATES=JSON.parse(se);}catch(e){}
+  renderSavedEstimates();
+  // Set today's date
+  document.getElementById("est-date").value=new Date().toISOString().slice(0,10);
   document.getElementById("mod").addEventListener("click",function(e){if(e.target===this)this.classList.remove("on");});
   // Login check
   var SESSION_KEY="np_session";
