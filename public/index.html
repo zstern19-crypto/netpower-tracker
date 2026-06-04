@@ -232,7 +232,7 @@ tr.hov:hover td{background:#F9FAFB;cursor:pointer}
 <div class="pnl" id="p-prices">
   <div class="empty" id="pe"><div class="ico">💲</div>No items yet — upload your first invoice</div>
   <div id="pc2" style="display:none">
-    <div class="srch"><input id="psrch" placeholder="Search items across all categories…" oninput="renderPrices()"></div>
+    <div class="srch"><input id="psrch" placeholder="Search all items across all categories…" oninput="renderPrices()"></div>
     <div id="price-cats"></div>
     <div id="drill" class="card" style="display:none;border-left:3px solid #2563EB;margin-top:4px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
@@ -843,7 +843,15 @@ function renderPrices(){
       var rows=catMap[cat];
       var cid="pcoll"+ci;
       var rowsHTML=rows.map(function(row,i){
-        return '<tr class="hov" data-name="'+esc(row.name)+'" style="background:'+(i%2?"#F9FAFB":"#fff")+'"><td class="b">'+esc(row.name)+'</td><td class="mono '+(row.credit?"red":"amber")+'">'+( row.credit?"–":"$"+(row.lp||0).toFixed(2))+'</td><td class="mono dim">'+(row.pp!=null?"$"+row.pp.toFixed(2):"–")+'</td><td>'+badge(row.pct)+'</td><td class="mono '+(row.credit?"grn b":"")+'">'+( row.credit?"CREDIT ":"")+fmt(Math.abs(row.total||0))+'</td><td>'+(row.credit?'<span class="pill" style="background:#F0FDF4;color:#16A34A">Credit</span>':'<span class="pill" style="background:#EFF6FF;color:#2563EB">Charge</span>')+'</td></tr>';
+        return '<tr class="hov" data-name="'+esc(row.name)+'" style="background:'+(i%2?"#F9FAFB":"#fff")+'">'+
+          '<td class="b">'+esc(row.name)+'</td>'+
+          '<td class="mono '+(row.credit?"red":"amber")+'">'+( row.credit?"–":"$"+(row.lp||0).toFixed(2))+'</td>'+
+          '<td class="mono dim">'+(row.pp!=null?"$"+row.pp.toFixed(2):"–")+'</td>'+
+          '<td>'+badge(row.pct)+'</td>'+
+          '<td class="mono '+(row.credit?"grn b":"")+'">'+( row.credit?"CREDIT ":"")+fmt(Math.abs(row.total||0))+'</td>'+
+          '<td>'+(row.credit?'<span class="pill" style="background:#F0FDF4;color:#16A34A">Credit</span>':'<span class="pill" style="background:#EFF6FF;color:#2563EB">Charge</span>')+'</td>'+
+          '<td><button class="spec-btn" data-spec="'+esc(row.name)+'" style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:5px;padding:2px 8px;font-size:10px;color:#2563EB;cursor:pointer;font-family:inherit">📐 Specs</button></td>'+
+        '</tr>';
       }).join("");
       html+='<div class="coll price-cat-sec" id="'+cid+'" style="border-left-color:'+col+'">'+
         '<div class="coll-h" data-cid="'+cid+'">'+
@@ -852,7 +860,7 @@ function renderPrices(){
         '</div>'+
         '<div class="coll-body" style="padding:8px 0">'+
           '<div style="padding:8px 12px 4px"><input class="inp" placeholder="Search '+esc(cat)+' items…" style="font-size:12px;padding:6px 10px" data-catfilter="'+esc(cat)+'" oninput="filterCatRows(this)"></div>'+
-          '<table><thead><tr><th>Item</th><th>Curr $/unit</th><th>Prev $/unit</th><th>Change</th><th>This Wk Total</th><th>Type</th></tr></thead>'+
+          '<table><thead><tr><th>Item</th><th>Curr $/unit</th><th>Prev $/unit</th><th>Change</th><th>This Wk Total</th><th>Type</th><th>Specs</th></tr></thead>'+
           '<tbody id="ptb-'+ci+'">'+rowsHTML+'</tbody></table>'+
         '</div>'+
       '</div>';
@@ -1230,17 +1238,21 @@ function lookupItemPrice(name){
   Object.keys(DB.items).forEach(function(k){
     var score = 0;
     if(k === nl) score = 100;
-    else if(k.indexOf(nl) !== -1) score = 50 + nl.length;
-    else if(nl.indexOf(k) !== -1) score = 40 + k.length;
+    else if(k.indexOf(nl) !== -1 && nl.length > 4) score = 60 + nl.length;
+    else if(nl.indexOf(k) !== -1 && k.length > 4) score = 50 + k.length;
     else {
-      // Word overlap scoring
-      var kWords = k.split(" "), nWords = nl.split(" ");
-      nWords.forEach(function(w){ if(w.length > 2 && k.indexOf(w) !== -1) score += 10; });
-      kWords.forEach(function(w){ if(w.length > 2 && nl.indexOf(w) !== -1) score += 10; });
+      // Word overlap scoring — require significant overlap
+      var kWords = k.split(" ").filter(function(w){return w.length>3;}); 
+      var nWords = nl.split(" ").filter(function(w){return w.length>3;});
+      var matched = 0;
+      nWords.forEach(function(w){ if(k.indexOf(w)!==-1) matched++; });
+      kWords.forEach(function(w){ if(nl.indexOf(w)!==-1) matched++; });
+      // Only count if majority of words match
+      if(matched > 0 && nWords.length > 0 && matched >= Math.ceil(nWords.length * 0.6)) score = 30 + matched*10;
     }
     if(score > bestScore){ bestScore = score; bestMatch = k; }
   });
-  if(!bestMatch || bestScore < 10) return {found:false, price:0, supplier:"", date:"", itemName:name};
+  if(!bestMatch || bestScore < 30) return {found:false, price:0, supplier:"", date:"", itemName:name};
   var it = DB.items[bestMatch];
   var weeks = Object.keys(it.weeks).sort();
   var lastWk = weeks[weeks.length-1] || "";
@@ -1451,7 +1463,7 @@ function openSpecs(itemName){
     if(score > bestScore){ bestScore = score; match = SPECS_DB[key]; }
   });
 
-  if(match && bestScore >= 15){
+  if(match && bestScore >= 20){
     SPECS_CACHE[itemName] = match;
     renderSpecs(match);
   } else {
