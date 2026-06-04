@@ -876,13 +876,20 @@ function renderPrices(){
       if(el)el.classList.toggle("open");
     });
   });
-  // Attach drill row clicks
+  // Attach drill row clicks — but not if spec btn was clicked
   document.querySelectorAll("#price-cats tbody tr").forEach(function(tr){
-    tr.addEventListener("click",function(){drillItem(this.getAttribute("data-name"));});
+    tr.addEventListener("click",function(e){
+      if(e.target.classList.contains("spec-btn"))return;
+      drillItem(this.getAttribute("data-name"));
+    });
   });
-  // Attach spec buttons
+  // Attach spec buttons — must be after tr listener
   document.querySelectorAll("#price-cats .spec-btn").forEach(function(btn){
-    btn.addEventListener("click",function(e){e.stopPropagation();openSpecs(this.getAttribute("data-spec"));});
+    btn.addEventListener("click",function(e){
+      e.stopPropagation();
+      e.preventDefault();
+      openSpecs(this.getAttribute("data-spec"));
+    });
   });
   // Auto-open if only one category or if searching
   if(catsWithData.length===1||qlo){
