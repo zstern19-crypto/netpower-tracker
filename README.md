@@ -11,6 +11,7 @@ Two apps deployed together on Vercel:
 
 Modules:
 
+- **Drawings** — upload PDF drawing sets; sheets are split out and sheet numbers/titles auto-detected from the title block (review before saving); drawing log by discipline with list/thumbnail views; revisions (new uploads of an existing sheet # become the next revision); zoomable viewer with markups (pen, highlighter, line, arrow, rectangle, revision cloud, text) that are private until published; pins that link a spot on a sheet to an RFI or punch item (or create one there); "Drawing Locations" shown on linked RFIs/punch items
 - **Portfolio** — all projects with status, PM, schedule, contract value
 - **Company Directory** — companies and people
 - **Project Home** — open-item counts, overdue flags, "My Open Items" (ball in court), recent activity, project info and team
@@ -37,7 +38,30 @@ There are no logins yet: each user picks their name (stored in their browser).
    - `PM_AIRTABLE_TABLE` — optional, defaults to `PM Records`
 4. Redeploy.
 
+### Drawing file storage (Vercel Blob)
+
+Drawing PDFs are too large for Airtable, so they are stored in Vercel Blob:
+
+1. Vercel → your project → **Storage** → create/connect a **Blob** store. This adds `BLOB_READ_WRITE_TOKEN` to the project automatically.
+2. Redeploy.
+
+Files are uploaded straight from the browser (up to 500 MB per PDF) using short-lived tokens from `api/blob.js`.
+Blob URLs are public but unguessable (random suffix). Check Vercel's Blob pricing/limits for your plan.
+
 If these variables are missing, `/pm` runs in **Local demo mode** (badge in the top bar):
 data is saved only in that browser and is not shared.
 
+In local demo mode, drawing PDFs are kept in the browser's IndexedDB.
+
 Photos are compressed in the browser to stay under Airtable's long-text size limit.
+
+### Third-party code
+
+`public/pm/vendor/` contains pdf.js 3.11.174 (`pdfjs-dist`) and a browser bundle of the
+`@vercel/blob@2.8.0` client, both Apache-2.0 (licenses alongside). The bundle was built with:
+
+```
+echo "export { upload } from '@vercel/blob/client';" > entry.js
+npx esbuild entry.js --bundle --minify --platform=browser --format=iife \
+  --global-name=VercelBlob '--define:process.env={}' --outfile=vercel-blob-client-2.8.0.js
+```

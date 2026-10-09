@@ -4,6 +4,8 @@
 (function () {
   "use strict";
 
+  const PM = window.NetPowerPM = window.NetPowerPM || {};
+
   // ───────────────────────── Helpers ─────────────────────────
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -111,6 +113,19 @@
         throw e;
       }
       return rec;
+    },
+
+    // Saves many records, sequentially in batches to stay within Airtable rate limits.
+    async saveMany(records, onProgress) {
+      records.forEach(r => { this.cache[r.id] = r; });
+      if (this.mode === "local") { this.persistLocal(); return; }
+      for (let i = 0; i < records.length; i += 20) {
+        const batch = records.slice(i, i + 20);
+        const r = await fetch("/api/pm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ records: batch }) });
+        const d = await r.json().catch(() => ({}));
+        if (!d.ok) throw new Error((d.error || "Save failed") + ` (saved ${i} of ${records.length})`);
+        if (onProgress) onProgress(Math.min(i + 20, records.length), records.length);
+      }
     },
 
     async remove(id, children) {
@@ -280,7 +295,7 @@
       save.disabled = true;
       try {
         const ok = await opts.onSave(root);
-        if (ok !== false) { closeModal(); render(); }
+        if (ok !== false) { closeModal(); if (!opts.noRender) render(); }
       } catch (e) {
         toast(e.message, true);
       } finally {
@@ -329,6 +344,7 @@
     const open = (type, statuses) => Store.all(type, p.id).filter(r => statuses.includes(r.data.status)).length;
     const tools = [
       ["home", "Home", ""],
+      ["drawings", "Drawings", Store.all("drawing", p.id).length || ""],
       ["rfis", "RFIs", open("rfi", ["Open"])],
       ["submittals", "Submittals", open("submittal", ["Open", "Revise and Resubmit"])],
       ["dailylog", "Daily Log", ""],
@@ -349,8 +365,11 @@
   let renderSeq = 0;
   async function render() {
     const seq = ++renderSeq;
-    document.body.classList.remove("menu-open");
-    const parts = location.hash.replace(/^#\/?/, "").split("?")[0].split("/").filter(Boolean).map(decodeURIComponent);
+    document.body.classList.remove("menu-open", "viewer-mode");
+    if (PM.cleanup) { try { PM.cleanup(); } catch (e) { /* ignore */ } PM.cleanup = null; }
+    const hash = location.hash.replace(/^#\/?/, "");
+    const parts = hash.split("?")[0].split("/").filter(Boolean).map(decodeURIComponent);
+    const query = new URLSearchParams(hash.split("?")[1] || "");
     const main = $("#main");
     current = { project: null, tool: null, nav: null };
     try {
@@ -362,7 +381,7 @@
         else {
           current.project = p;
           current.tool = parts[2] || "home";
-          await Promise.all(["rfi", "submittal", "dailylog", "punch"].map(t => Store.load(t, p.id)));
+          await Promise.all(["rfi", "submittal", "dailylog", "punch", "drawing", "markup"].map(t => Store.load(t, p.id)));
           const sub = parts[3];
           view = {
             home: () => projectHome(p),
@@ -370,7 +389,8 @@
             submittals: () => sub ? submittalDetail(p, sub) : submittalList(p),
             dailylog: () => dailyLog(p, sub),
             punch: () => sub ? punchDetail(p, sub) : punchList(p),
-            team: () => projectTeam(p)
+            team: () => projectTeam(p),
+            drawings: () => PM.drawings ? (sub ? PM.drawings.viewer(p, sub, query) : PM.drawings.log(p)) : `<div class="empty">Drawings module failed to load.</div>`
           }[current.tool] || (() => `<div class="empty">Unknown tool.</div>`);
         }
       } else if (parts[0] === "directory") {
@@ -706,7 +726,7 @@
     }
 
     const activity = [];
-    [["RFI", rfis, "rfis", r => "#" + r.data.number + " " + r.data.subject], ["Submittal", subs, "submittals", s => "#" + s.data.number + " " + s.data.title], ["Punch", punch, "punch", x => "#" + x.data.number + " " + x.data.title], ["Daily Log", logs, "dailylog", l => fmtDate(l.data.date)]]
+    [["RFI", rfis, "rfis", r => "#" + r.data.number + " " + r.data.subject], ["Submittal", subs, "submittals", s => "#" + s.data.number + " " + s.data.title], ["Punch", punch, "punch", x => "#" + x.data.number + " " + x.data.title], ["Daily Log", logs, "dailylog", l => fmtDate(l.data.date)], ["Drawing", Store.all("drawing", p.id), "drawings", g => g.data.number + " " + (g.data.title || "")]]
       .forEach(([label, list, tool, name]) => list.forEach(r => (r.data.history || []).forEach(h => activity.push({ ...h, label, name: name(r), href: `#/p/${p.id}/${tool}/${tool === "dailylog" ? r.data.date : r.id}` }))));
     (p.data.history || []).forEach(h => activity.push({ ...h, label: "Project", name: "", href: `#/p/${p.id}` }));
     activity.sort((a, b) => b.at.localeCompare(a.at));
@@ -770,11 +790,12 @@
     { k: "private", label: "Private (visible only to RFI manager and assignees — informational only, no access control yet)", type: "checkbox", full: true }
   ];
 
-  function editRFI(p, r, asDraft) {
+  function editRFI(p, r, opts = {}) {
     const isNew = !r;
     openModal({
       title: isNew ? "Create RFI" : `Edit RFI #${r.data.number}`,
-      body: formHTML(RFI_FIELDS, r ? r.data : { managerId: me() || p.data.pmId || "", due: addDays(today(), 7) }, { project: p }),
+      noRender: !!opts.onCreated,
+      body: formHTML(RFI_FIELDS, r ? r.data : { managerId: me() || p.data.pmId || "", due: addDays(today(), 7), ...(opts.defaults || {}) }, { project: p }),
       saveLabel: isNew ? "Create (Open)" : "Save",
       wide: true,
       onOpen: root => {
@@ -787,7 +808,7 @@
             const vals = readForm(root, RFI_FIELDS);
             const rec = { id: uid("rfi"), type: "rfi", projectId: p.id, data: { ...vals, number: nextNumber("rfi", p.id), status: "Draft", responses: [], createdBy: meName(), createdAt: new Date().toISOString() } };
             withHistory(rec, "Created as draft");
-            if (await saveRec(rec, "Draft saved")) { closeModal(); location.hash = `#/p/${p.id}/rfis/${rec.id}`; }
+            if (await saveRec(rec, "Draft saved")) { closeModal(); if (opts.onCreated) opts.onCreated(rec); else location.hash = `#/p/${p.id}/rfis/${rec.id}`; }
           } catch (e) { toast(e.message, true); }
         };
         $(".modal-foot", root).insertBefore(b, $("[data-save]", root));
@@ -798,7 +819,7 @@
           const rec = { id: uid("rfi"), type: "rfi", projectId: p.id, data: { ...vals, number: nextNumber("rfi", p.id), status: "Open", responses: [], createdBy: meName(), createdAt: new Date().toISOString(), openedAt: new Date().toISOString() } };
           withHistory(rec, "Created and opened");
           if (!(await saveRec(rec, `RFI #${rec.data.number} created`))) return false;
-          location.hash = `#/p/${p.id}/rfis/${rec.id}`;
+          if (opts.onCreated) opts.onCreated(rec); else location.hash = `#/p/${p.id}/rfis/${rec.id}`;
         } else {
           const rec = withHistory({ ...r, data: { ...r.data, ...vals } }, "Details edited");
           return saveRec(rec, "RFI saved");
@@ -905,7 +926,12 @@
             ${open ? `<label class="inline-check"><input type="checkbox" id="respClose"> Close RFI</label>` : `<input type="checkbox" id="respClose" hidden>`}
             <button class="btn primary" data-act="rfiRespond" data-id="${r.id}">Post Response</button></div></div>` : `<p class="muted no-print">Open the RFI to collect responses.</p>`}
       </div>
+      ${drawingLinksPanel(p, r.id)}
       ${historyPanel(d)}`;
+  }
+
+  function drawingLinksPanel(p, targetId) {
+    return PM.drawings ? PM.drawings.linksPanel(p, targetId) : "";
   }
 
   function historyPanel(d) {
@@ -1247,11 +1273,12 @@
     { k: "reference", label: "Reference (drawing, spec, RFI #)" }
   ];
 
-  function editPunch(p, x) {
+  function editPunch(p, x, opts = {}) {
     const isNew = !x;
     openModal({
       title: isNew ? "Create Punch Item" : `Edit Punch Item #${x.data.number}`,
-      body: formHTML(PUNCH_FIELDS, x ? x.data : { managerId: me() || p.data.superId || "", priority: "Medium", due: addDays(today(), 7) }, { project: p }),
+      noRender: !!opts.onCreated,
+      body: formHTML(PUNCH_FIELDS, x ? x.data : { managerId: me() || p.data.superId || "", priority: "Medium", due: addDays(today(), 7), ...(opts.defaults || {}) }, { project: p }),
       wide: true,
       onSave: async root => {
         const vals = readForm(root, PUNCH_FIELDS);
@@ -1259,7 +1286,7 @@
           const rec = { id: uid("pch"), type: "punch", projectId: p.id, data: { ...vals, number: nextNumber("punch", p.id), status: "Open", comments: [], createdBy: meName(), createdAt: new Date().toISOString() } };
           withHistory(rec, "Created");
           if (!(await saveRec(rec, `Punch item #${rec.data.number} created`))) return false;
-          location.hash = `#/p/${p.id}/punch/${rec.id}`;
+          if (opts.onCreated) opts.onCreated(rec); else location.hash = `#/p/${p.id}/punch/${rec.id}`;
         } else {
           return saveRec(withHistory({ ...x, data: { ...x.data, ...vals } }, "Details edited"), "Punch item saved");
         }
@@ -1359,6 +1386,7 @@
           <textarea id="punchComment" placeholder="Add a comment (also attached to the next status change)…"></textarea>
           <button class="btn" style="margin-top:8px" data-act="punchComment" data-id="${x.id}">Add Comment</button></div>
       </div>
+      ${drawingLinksPanel(p, x.id)}
       ${historyPanel(d)}`;
   }
 
@@ -1439,16 +1467,25 @@
     });
   }
 
+  // ───────────────────────── Extension API (used by drawings.js) ─────────────────────────
+  Object.assign(PM, {
+    $, $$, esc, slug, uid, today, addDays, fmtDate, fmtDateTime, pill, toast, lsGet, lsSet,
+    Store, saveRec, withHistory, me, meName, contactName, render, bind, ACTIONS,
+    openModal, closeModal, formHTML, readForm, editRFI, editPunch, pickUser: () => pickUser()
+  });
+
   // ───────────────────────── Boot ─────────────────────────
   $("#userBtn").onclick = pickUser;
   $("#menuBtn").onclick = () => document.body.classList.toggle("menu-open");
   $("#projectPicker").onchange = e => { if (e.target.value) location.hash = "#/p/" + e.target.value; };
   window.addEventListener("hashchange", render);
 
-  Store.init().then(async () => {
+  const boot = () => Store.init().then(async () => {
     await render();
     if (!me()) pickUser();
   }).catch(e => {
     $("#main").innerHTML = `<div class="panel"><h2>Could not connect to the database</h2><p class="muted">${esc(e.message)}</p><button class="btn" onclick="location.reload()">Retry</button></div>`;
   });
+  // Wait for DOMContentLoaded so extension scripts (drawings.js) can register first
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
 })();

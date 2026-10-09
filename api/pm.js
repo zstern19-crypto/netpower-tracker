@@ -15,7 +15,7 @@ const TOKEN = process.env.PM_AIRTABLE_TOKEN;
 const BASE = process.env.PM_AIRTABLE_BASE;
 const TABLE = process.env.PM_AIRTABLE_TABLE || "PM Records";
 
-const TYPES = ["project", "company", "contact", "rfi", "submittal", "dailylog", "punch", "photo"];
+const TYPES = ["project", "company", "contact", "rfi", "submittal", "dailylog", "punch", "photo", "drawing", "drawset", "markup"];
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 function tableUrl(query) {
@@ -26,8 +26,22 @@ function headers() {
   return { Authorization: "Bearer " + TOKEN, "Content-Type": "application/json" };
 }
 
+// Airtable allows roughly 5 requests/second per base; space out calls within one invocation.
+let lastCall = 0;
+async function throttle() {
+  const wait = lastCall + 220 - Date.now();
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  lastCall = Date.now();
+}
+
 async function airtable(url, opts = {}) {
-  const r = await fetch(url, { ...opts, headers: headers() });
+  await throttle();
+  let r = await fetch(url, { ...opts, headers: headers() });
+  if (r.status === 429) {
+    // Rate limited: back off once, then retry
+    await new Promise(res => setTimeout(res, 1500));
+    r = await fetch(url, { ...opts, headers: headers() });
+  }
   const d = await r.json().catch(() => ({}));
   if (!r.ok || d.error) {
     const msg = (d.error && (d.error.message || d.error.type || d.error)) || `Airtable HTTP ${r.status}`;
