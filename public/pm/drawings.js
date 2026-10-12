@@ -48,6 +48,15 @@
         tx.onerror = () => reject(tx.error);
       });
     },
+    async del(key) {
+      const db = await this.open();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction("files", "readwrite");
+        tx.objectStore("files").delete(key);
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+    },
     async get(key) {
       const db = await this.open();
       return new Promise((resolve, reject) => {
@@ -86,8 +95,20 @@
     return res.url;
   }
 
+  // Files in a private Blob store can only be read through short-lived signed links
+  const signedCache = new Map();  // fileUrl → { url, exp }
+  async function readableUrl(fileUrl) {
+    if (!/\.private\.blob\.vercel-storage\.com\//.test(fileUrl)) return fileUrl;
+    const c = signedCache.get(fileUrl);
+    if (c && c.exp > Date.now() + 5 * 60 * 1000) return c.url;
+    const d = await fetch("/api/blob?sign=" + encodeURIComponent(fileUrl)).then(r => r.json()).catch(() => ({}));
+    if (!d.ok) throw new Error("Could not get access to this file: " + (d.error || "unknown error"));
+    signedCache.set(fileUrl, { url: d.url, exp: d.expiresAt || Date.now() + 55 * 60 * 1000 });
+    return d.url;
+  }
+
   async function fileObjectUrl(fileUrl) {
-    if (!fileUrl.startsWith("idb:")) return fileUrl;
+    if (!fileUrl.startsWith("idb:")) return readableUrl(fileUrl);
     const blob = await IDB.get(fileUrl.slice(4));
     if (!blob) throw new Error("This file was uploaded in another browser (local demo mode) and isn't available here.");
     return URL.createObjectURL(blob);
@@ -95,8 +116,15 @@
 
   // ───────────────────────── PDF helpers ─────────────────────────
   const docCache = new Map();
+  const docOpenedAt = new Map();
   function openPdf(fileUrl) {
+    // Signed links expire after an hour; reopen documents before that so page loads keep working
+    if (docCache.has(fileUrl) && Date.now() - (docOpenedAt.get(fileUrl) || 0) > 45 * 60 * 1000) {
+      docCache.get(fileUrl).then(d => d.destroy()).catch(() => {});
+      docCache.delete(fileUrl);
+    }
     if (docCache.has(fileUrl)) return docCache.get(fileUrl);
+    docOpenedAt.set(fileUrl, Date.now());
     const p = (async () => {
       const lib = await pdfjs();
       if (fileUrl.startsWith("idb:")) {
@@ -105,7 +133,8 @@
         return lib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) }).promise;
       }
       // Range requests: only the bytes needed for the viewed page are downloaded
-      return lib.getDocument({ url: fileUrl, rangeChunkSize: 262144, disableAutoFetch: true, disableStream: true }).promise;
+      const url = await readableUrl(fileUrl);
+      return lib.getDocument({ url, rangeChunkSize: 262144, disableAutoFetch: true, disableStream: true }).promise;
     })();
     docCache.set(fileUrl, p);
     p.catch(() => docCache.delete(fileUrl));
@@ -367,6 +396,63 @@
     }
   }
 
+  // ───────────────────────── Deleting ─────────────────────────
+  async function deleteFiles(urls) {
+    for (const u of urls) {
+      try {
+        if (u.startsWith("idb:")) await IDB.del(u.slice(4));
+        else await fetch("/api/blob?url=" + encodeURIComponent(u), { method: "DELETE" });
+      } catch (e) { /* the record is gone either way; a leftover file is harmless */ }
+    }
+  }
+
+  // After sheets/revisions are removed: delete drawing sets and files nothing refers to any more
+  async function cleanupOrphans(p, fileUrls, setIds) {
+    const revs = Store.all("drawing", p.id).flatMap(g => g.data.revisions || []);
+    const usedFiles = new Set(revs.map(r => r.fileUrl));
+    const usedSets = new Set(revs.map(r => r.setId));
+    for (const id of setIds) if (!usedSets.has(id) && Store.get(id)) await Store.remove(id);
+    await deleteFiles([...new Set(fileUrls)].filter(u => u && !usedFiles.has(u)));
+  }
+
+  async function removeMarkups(p, match) {
+    for (const m of Store.all("markup", p.id).filter(match)) await Store.remove(m.id);
+  }
+
+  async function deleteSheets(p, ids) {
+    const sheets = ids.map(id => Store.get(id)).filter(Boolean);
+    const revs = sheets.flatMap(g => g.data.revisions || []);
+    await removeMarkups(p, m => ids.includes(m.data.drawingId));
+    for (const g of sheets) await Store.remove(g.id);
+    await cleanupOrphans(p, revs.map(r => r.fileUrl), revs.map(r => r.setId));
+  }
+
+  async function deleteSet(p, setId) {
+    const set = Store.get(setId);
+    const files = set ? [set.data.fileUrl] : [];
+    const updates = [];
+    for (const g of Store.all("drawing", p.id)) {
+      const removed = (g.data.revisions || []).filter(r => r.setId === setId);
+      if (!removed.length) continue;
+      files.push(...removed.map(r => r.fileUrl));
+      const removedIds = removed.map(r => r.id);
+      await removeMarkups(p, m => m.data.drawingId === g.id && removedIds.includes(m.data.revId));
+      const remaining = (g.data.revisions || []).filter(r => r.setId !== setId);
+      if (!remaining.length) { await Store.remove(g.id); continue; }
+      const next = { ...g, data: { ...g.data, revisions: remaining } };
+      if (!remaining.some(r => r.id === g.data.current)) {
+        const latest = remaining.slice().sort((a, b) => ((a.drawingDate || a.at || "") < (b.drawingDate || b.at || "") ? 1 : -1))[0];
+        next.data.current = latest.id;
+        next.data.thumb = "";
+      }
+      PM.withHistory(next, `Revision(s) from set "${set ? set.data.name : "?"}" deleted`);
+      updates.push(next);
+    }
+    if (updates.length) await Store.saveMany(updates);
+    if (set) await Store.remove(setId);
+    await cleanupOrphans(p, files, [setId]);
+  }
+
   // ───────────────────────── Drawing log ─────────────────────────
   const logFilter = { q: "", discipline: "" };
 
@@ -385,17 +471,18 @@
       }).join("")}</div>`;
     }
     let lastDisc = null;
-    return `<div class="table-wrap"><table class="list"><thead><tr><th></th><th>Sheet #</th><th>Title</th><th>Rev</th><th>Drawing Date</th><th>Set</th><th>Revs</th><th>Links</th></tr></thead><tbody>
+    return `<div class="table-wrap"><table class="list"><thead><tr><th></th><th>Sheet #</th><th>Title</th><th>Rev</th><th>Drawing Date</th><th>Set</th><th>Revs</th><th>Links</th><th></th></tr></thead><tbody>
       ${list.map(g => {
         const r = currentRev(g) || {};
-        const head = !logFilter.discipline && g.data.discipline !== lastDisc ? `<tr class="grp-row"><td colspan="8">${esc(g.data.discipline || "Other")}</td></tr>` : "";
+        const head = !logFilter.discipline && g.data.discipline !== lastDisc ? `<tr class="grp-row"><td colspan="9">${esc(g.data.discipline || "Other")}</td></tr>` : "";
         lastDisc = g.data.discipline;
         return head + `<tr class="click" data-href="#/p/${p.id}/drawings/${g.id}">
           <td style="width:70px">${g.data.thumb ? `<img class="ds-thumb sm" src="${g.data.thumb}" alt="">` : ""}</td>
           <td class="nowrap"><a href="#/p/${p.id}/drawings/${g.id}"><strong>${esc(g.data.number)}</strong></a></td>
           <td>${esc(g.data.title || "")}</td><td>${esc(r.rev || "")}</td>
           <td class="nowrap">${PM.fmtDate(r.drawingDate) || ""}</td><td>${esc(r.setName || "")}</td>
-          <td>${(g.data.revisions || []).length}</td><td>${pins[g.id] || ""}</td></tr>`;
+          <td>${(g.data.revisions || []).length}</td><td>${pins[g.id] || ""}</td>
+          <td><button class="btn small danger" data-delsheet="${g.id}" title="Delete sheet ${esc(g.data.number)}" aria-label="Delete sheet ${esc(g.data.number)}">🗑</button></td></tr>`;
       }).join("")}</tbody></table></div>`;
   }
 
@@ -433,7 +520,8 @@
         ${sets.length ? `<div class="table-wrap"><table class="list"><thead><tr><th>Set</th><th>File</th><th>Sheets</th><th>Drawing Date</th><th>Uploaded</th><th></th></tr></thead><tbody>
           ${sets.map(s => `<tr><td><strong>${esc(s.data.name)}</strong></td><td>${esc(s.data.fileName)}</td><td>${s.data.sheets}</td><td class="nowrap">${PM.fmtDate(s.data.drawingDate)}</td>
             <td class="nowrap">${PM.fmtDate(s.data.at)} · ${esc(s.data.uploadedBy || "")}</td>
-            <td><button class="btn small" data-dl="${esc(s.data.fileUrl)}" data-name="${esc(s.data.fileName)}">Download PDF</button></td></tr>`).join("")}
+            <td class="nowrap"><button class="btn small" data-dl="${esc(s.data.fileUrl)}" data-name="${esc(s.data.fileName)}">Download PDF</button>
+              <button class="btn small danger" data-delset="${s.id}">Delete set</button></td></tr>`).join("")}
         </tbody></table></div>` : `<p class="muted">No drawing sets uploaded yet.</p>`}
       </div>`;
   }
@@ -446,6 +534,38 @@
     $("#dwgDisc").addEventListener("change", e => { logFilter.discipline = e.target.value; $("#dwgRows").innerHTML = logRows(p); PM.bind($("#dwgRows")); });
     $$("[data-view]").forEach(b => b.onclick = () => { PM.lsSet("netpower_pm_dwg_view", b.dataset.view); PM.render(); });
   }
+
+  // Delete buttons in the drawing log
+  document.addEventListener("click", async e => {
+    const b = e.target.closest && e.target.closest("[data-delsheet], [data-delset]");
+    if (!b) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const p = Store.get(location.hash.split("/")[2]);
+    if (!p) return;
+    try {
+      if (b.dataset.delsheet) {
+        const g = Store.get(b.dataset.delsheet);
+        if (!g || !window.confirm(`Delete sheet ${g.data.number}${g.data.title ? " (" + g.data.title + ")" : ""} with all ${(g.data.revisions || []).length} revision(s) and markups? This cannot be undone.`)) return;
+        b.disabled = true;
+        await deleteSheets(p, [g.id]);
+        toast(`Sheet ${g.data.number} deleted`);
+      } else {
+        const set = Store.get(b.dataset.delset);
+        if (!set) return;
+        const n = Store.all("drawing", p.id).filter(g => (g.data.revisions || []).some(r => r.setId === set.id)).length;
+        if (!window.confirm(`Delete the drawing set "${set.data.name}" (${set.data.fileName})?\n\nThis removes its ${n} sheet revision(s), their markups and the PDF file. Sheets that also have revisions from other sets keep those. This cannot be undone.`)) return;
+        b.disabled = true;
+        toast("Deleting set…");
+        await deleteSet(p, set.id);
+        toast(`Set "${set.data.name}" deleted`);
+      }
+      PM.render();
+    } catch (err) {
+      b.disabled = false;
+      toast("Delete failed: " + err.message, true);
+    }
+  }, true);
 
   // Download buttons (log + viewer)
   document.addEventListener("click", async e => {
@@ -604,6 +724,8 @@
     $("#dvPublish").onclick = publish;
     $("#dvRev").onchange = e => { location.hash = `#/p/${p.id}/drawings/${g.id}?rev=${e.target.value}`; };
     $("#dvSideBtn").onclick = () => document.body.classList.toggle("dv-side-open");
+
+    renderSide();  // available even if the PDF fails to load (e.g. to delete the sheet)
 
     // Load the PDF page
     try {
@@ -1060,8 +1182,8 @@
       if (!window.confirm(`Delete sheet ${g.data.number} with all ${(g.data.revisions || []).length} revision(s) and their markups? This cannot be undone.`)) return;
       try {
         V.dirty = false;
-        for (const m of Store.all("markup", p.id).filter(m => m.data.drawingId === g.id)) await Store.remove(m.id);
-        await Store.remove(g.id);
+        clearTimeout(V.saveTimer);
+        await deleteSheets(p, [g.id]);
         toast("Sheet deleted");
         location.hash = `#/p/${p.id}/drawings`;
       } catch (e) { toast("Delete failed: " + e.message, true); }
