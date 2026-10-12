@@ -7,6 +7,12 @@ Two apps deployed together on Vercel:
 | `/`   | **Material Tracker** — invoice upload, price tracking, jobsites, estimates (`public/index.html`) |
 | `/pm` | **NetPower PM** — Procore-style project management (`public/pm/`, API in `api/pm.js`) |
 
+## Material Tracker setup
+
+`api/airtable.js` reads its Airtable token from the environment. In Vercel → Project → Settings →
+Environment Variables, set `AIRTABLE_TOKEN` (optional: `AIRTABLE_BASE`, `AIRTABLE_TABLE`; they default
+to the existing base and "Table 1"). Without it, the tracker's API returns an error.
+
 ## NetPower PM
 
 Modules:
