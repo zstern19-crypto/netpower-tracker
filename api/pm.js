@@ -11,9 +11,11 @@
 // Every record in the app (projects, companies, contacts, RFIs, submittals,
 // daily logs, punch items, photos) is stored as one row; its fields live as JSON in Data.
 
-const TOKEN = process.env.PM_AIRTABLE_TOKEN;
-const BASE = process.env.PM_AIRTABLE_BASE;
-const TABLE = process.env.PM_AIRTABLE_TABLE || "PM Records";
+const TOKEN = (process.env.PM_AIRTABLE_TOKEN || "").trim();
+// Accept a bare base ID or a pasted Airtable URL (https://airtable.com/appXXXX/tblYYYY/...)
+const BASE_RAW = (process.env.PM_AIRTABLE_BASE || "").trim();
+const BASE = (BASE_RAW.match(/app[A-Za-z0-9]{14}/) || [BASE_RAW])[0];
+const TABLE = (process.env.PM_AIRTABLE_TABLE || "").trim() || "PM Records";
 
 const TYPES = ["project", "company", "contact", "rfi", "submittal", "dailylog", "punch", "photo", "drawing", "drawset", "markup"];
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -44,8 +46,14 @@ async function airtable(url, opts = {}) {
   }
   const d = await r.json().catch(() => ({}));
   if (!r.ok || d.error) {
-    const msg = (d.error && (d.error.message || d.error.type || d.error)) || `Airtable HTTP ${r.status}`;
-    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    let msg = (d.error && (d.error.message || d.error.type || d.error)) || `Airtable HTTP ${r.status}`;
+    if (typeof msg !== "string") msg = JSON.stringify(msg);
+    if (r.status === 404 || r.status === 403) {
+      // Base IDs and table names aren't secret; naming them makes setup mistakes obvious
+      msg += ` (HTTP ${r.status}) — Airtable could not find base "${BASE}" / table "${TABLE}", or the token can't access them. ` +
+        `Check PM_AIRTABLE_BASE (should look like app followed by 14 letters/numbers), the table name, and the token's base access.`;
+    }
+    throw new Error(msg);
   }
   return d;
 }
