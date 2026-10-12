@@ -1,6 +1,7 @@
-const AT_TOKEN = "patzYzQBgJXZlHCr6.8021cd1fcd6fc7d7eb4239bc5096c67b5517a91adeccd58d7eb3c3ae6fccc440";
-const AT_BASE  = "appDvscikJtSDsoku";
-const AT_TABLE = "Table 1";
+// Set AIRTABLE_TOKEN in Vercel → Project → Settings → Environment Variables.
+const AT_TOKEN = process.env.AIRTABLE_TOKEN;
+const AT_BASE  = process.env.AIRTABLE_BASE || "appDvscikJtSDsoku";
+const AT_TABLE = process.env.AIRTABLE_TABLE || "Table 1";
 
 export default async function handler(req, res) {
   // Allow all origins
@@ -8,6 +9,10 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") { res.status(200).end(); return; }
+  if (!AT_TOKEN) {
+    res.status(500).json({ ok: false, error: "AIRTABLE_TOKEN environment variable is not set" });
+    return;
+  }
 
   const action = req.query.action || "read";
   const headers = {
