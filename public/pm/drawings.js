@@ -58,6 +58,7 @@
     }
   };
 
+  let blobMode = null;  // "presigned" | "token", from GET /api/blob
   async function storeFile(projectId, file, onProgress) {
     const safe = (file.name.replace(/[^A-Za-z0-9._-]+/g, "_").slice(-120)) || "drawing.pdf";
     if (Store.mode === "local") {
@@ -66,21 +67,23 @@
       if (onProgress) onProgress(100);
       return "idb:" + key;
     }
-    await loadScript("/pm/vendor/vercel-blob-client-2.8.0.js");
-    try {
-      const res = await window.VercelBlob.upload(`drawings/${projectId}/${safe}`, file, {
-        access: "public",
-        handleUploadUrl: "/api/blob",
-        contentType: "application/pdf",
-        multipart: file.size > 20 * 1024 * 1024,
-        onUploadProgress: e => { if (onProgress) onProgress(e.percentage); }
-      });
-      return res.url;
-    } catch (e) {
-      const probe = await fetch("/api/blob", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then(r => r.json()).catch(() => ({}));
-      if (probe.code === "NOT_CONFIGURED") throw new Error("File storage isn't set up yet: connect a Vercel Blob store to this project (see README).");
-      throw e;
+    if (!blobMode) {
+      const info = await fetch("/api/blob").then(r => r.json()).catch(() => ({}));
+      if (info.code === "NOT_CONFIGURED") throw new Error("File storage isn't set up yet: connect a Vercel Blob store to this project (see README).");
+      if (!info.ok) throw new Error("File storage check failed: " + (info.error || "unknown error"));
+      blobMode = info.mode;
     }
+    await loadScript("/pm/vendor/vercel-blob-client-2.8.0.js");
+    const fn = blobMode === "presigned" ? window.VercelBlob.uploadPresigned : window.VercelBlob.upload;
+    // Unique pathname per upload (presigned uploads don't add a random suffix)
+    const res = await fn(`drawings/${projectId}/${uid("f")}-${safe}`, file, {
+      access: "public",
+      handleUploadUrl: "/api/blob",
+      contentType: "application/pdf",
+      multipart: file.size > 20 * 1024 * 1024,
+      onUploadProgress: e => { if (onProgress) onProgress(e.percentage); }
+    });
+    return res.url;
   }
 
   async function fileObjectUrl(fileUrl) {

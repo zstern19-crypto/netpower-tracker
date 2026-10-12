@@ -48,7 +48,9 @@ There are no logins yet: each user picks their name (stored in their browser).
 
 Drawing PDFs are too large for Airtable, so they are stored in Vercel Blob:
 
-1. Vercel → your project → **Storage** → create/connect a **Blob** store. This adds `BLOB_READ_WRITE_TOKEN` to the project automatically.
+1. Vercel → your project → **Storage** → create/connect a **Blob** store. Vercel adds the credentials automatically:
+   newer stores add `BLOB_STORE_ID` + `BLOB_WEBHOOK_PUBLIC_KEY` (OIDC, presigned uploads); older ones add `BLOB_READ_WRITE_TOKEN`.
+   `api/blob.js` supports both.
 2. Redeploy.
 
 Files are uploaded straight from the browser (up to 500 MB per PDF) using short-lived tokens from `api/blob.js`.
@@ -67,7 +69,7 @@ Photos are compressed in the browser to stay under Airtable's long-text size lim
 `@vercel/blob@2.8.0` client, both Apache-2.0 (licenses alongside). The bundle was built with:
 
 ```
-echo "export { upload } from '@vercel/blob/client';" > entry.js
+echo "export { upload, uploadPresigned } from '@vercel/blob/client';" > entry.js
 npx esbuild entry.js --bundle --minify --platform=browser --format=iife \
   --global-name=VercelBlob '--define:process.env={}' --outfile=vercel-blob-client-2.8.0.js
 ```
