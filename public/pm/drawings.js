@@ -136,6 +136,8 @@
   // Labels that look like sheet numbers but aren't (note: single letters like "A"/"E" are real disciplines)
   const NOT_SHEET = /^(NO|REV|RM|UL|CH|PH|FL|LVL|TYP|QTY|SEC|DET|NTS|MIN|MAX|AWG|KVA|KW|HP)[-.]?\d/;
   const TITLE_STOP = /^(SHEET|SHEET NO|SHEET NUMBER|SHEET TITLE|TITLE|DRAWING|DRAWING NO|DRAWING TITLE|PROJECT|PROJECT NO|SCALE|DATE|DRAWN|DRAWN BY|CHECKED|CHECKED BY|APPROVED|REVISION|REVISIONS|JOB|JOB NO|SEAL|CLIENT|OWNER|ISSUE|ISSUED|ISSUED FOR|KEY PLAN|NORTH|AS NOTED|NOT FOR CONSTRUCTION)\b:?$/;
+  // Addresses in the title block ("BROOKLYN, NY 11201", "120 River Rd") are not sheet titles
+  const ADDRESS_RE = /,\s*[A-Z]{2}\b(\s*\d{5})?|\b\d{5}(-\d{4})?\s*$|^\d+\s+\w+.*\b(ST|STREET|AVE|AVENUE|RD|ROAD|BLVD|DR|DRIVE|LN|LANE|PL|PLACE|WAY|CT|COURT)\.?\b/i;
   const DISCIPLINE_PREFIXES = [
     ["FA", "Fire Alarm"], ["FP", "Fire Protection"], ["LV", "Low Voltage"], ["TC", "Telecom"],
     ["G", "General"], ["C", "Civil"], ["L", "Landscape"], ["S", "Structural"], ["A", "Architectural"],
@@ -182,7 +184,8 @@
 
     let title = "";
     const cands = items.filter(it => inTitleBlock(it) && /[A-Za-z]{3}/.test(it.s) && it.s.length >= 4 && it.s.length <= 70 &&
-      !TITLE_STOP.test(it.s.toUpperCase()) && !(best && it === best.it) && !/\d{1,2}\/\d{1,2}\/\d{2,4}|@|www\.|\.com|^\d/.test(it.s));
+      !TITLE_STOP.test(it.s.toUpperCase()) && !(best && it === best.it) && !/\d{1,2}\/\d{1,2}\/\d{2,4}|@|www\.|\.com|^\d/.test(it.s) &&
+      !ADDRESS_RE.test(it.s));
     if (cands.length) {
       const top = cands.reduce((a, b) => (b.size > a.size ? b : a));
       const line = cands.filter(c => Math.abs(c.size - top.size) / top.size < 0.12 && Math.abs(c.y - top.y) < 0.04 && Math.abs(c.x - top.x) < 0.3)
