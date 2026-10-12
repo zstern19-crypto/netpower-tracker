@@ -661,19 +661,41 @@
   }
 
   // ───────────────────────── Viewer ─────────────────────────
+  // [key, icon, label, shortcut, how-to hint]
   const TOOLS = [
-    ["pan", "✋", "Select / pan (drag to move, click a markup to select)"],
-    ["pen", "✎", "Freehand pen"],
-    ["highlight", "▬", "Highlighter"],
-    ["line", "╱", "Line"],
-    ["arrow", "➚", "Arrow"],
-    ["rect", "▭", "Rectangle"],
-    ["cloud", "☁", "Revision cloud"],
-    ["text", "T", "Text"],
-    ["link", "📍", "Pin an RFI or punch item"]
+    ["pan", "➚", "Select", "V", "Scroll to zoom · drag to move the sheet · click a markup to select or move it · double-click text to edit"],
+    ["pen", "✎", "Pen", "P", "Drag to draw freehand"],
+    ["highlight", "▬", "Highlight", "H", "Drag to highlight"],
+    ["line", "╱", "Line", "L", "Drag to draw a line"],
+    ["arrow", "↗", "Arrow", "A", "Drag from the tail to the tip"],
+    ["rect", "▭", "Box", "B", "Drag to draw a box"],
+    ["cloud", "☁", "Cloud", "C", "Drag to draw a revision cloud"],
+    ["text", "T", "Text", "T", "Click where the text should go"],
+    ["link", "📍", "Pin", "N", "Click a spot to pin an RFI or punch item there"]
   ];
   const COLORS = ["#e5322d", "#f26722", "#e6b800", "#1f9d55", "#1d63c9", "#7b3fbf", "#111111"];
-  const viewState = {};  // "drawingId|revId" → {zoom, sl, st} restored on remount
+  const WIDTHS = [["1.5", "Thin"], ["2.5", "Medium"], ["5", "Thick"], ["9", "Extra thick"]];
+  const FONTS = {
+    arial: ["Arial", "Arial, Helvetica, sans-serif"],
+    verdana: ["Verdana", "Verdana, Geneva, sans-serif"],
+    times: ["Times New Roman", "'Times New Roman', Times, serif"],
+    georgia: ["Georgia", "Georgia, serif"],
+    courier: ["Courier New", "'Courier New', Courier, monospace"]
+  };
+  const TEXT_SIZES = [6, 8, 10, 12, 14, 18, 24, 36, 48, 72, 96, 144];
+  const TEXT_FILLS = [["", "None"], ["#ffffff", "White"], ["#fff59d", "Yellow"]];
+  const viewState = {};  // "drawingId|revId" → {zoom, cx, cy} restored on remount
+
+  // Text box geometry (page units = PDF points)
+  const measureCtx = document.createElement("canvas").getContext("2d");
+  const fontFamily = s => (FONTS[s.font] || FONTS.arial)[1];
+  function textBox(s) {
+    measureCtx.font = `${s.italic ? "italic " : ""}${s.bold ? "700" : "400"} 100px ${fontFamily(s)}`;
+    const lines = String(s.text || "").split("\n");
+    const w = Math.max(...lines.map(l => measureCtx.measureText(l).width)) * s.size / 100;
+    const lh = s.size * 1.2, pad = s.size * 0.35;
+    return { lines, lh, pad, w: w + 2 * pad, h: lines.length * lh + 2 * pad };
+  }
 
   function viewer(p, id, query) {
     const g = Store.get(id);
@@ -685,6 +707,7 @@
     const idx = sheets.findIndex(x => x.id === g.id);
     const prev = sheets[idx - 1], next = sheets[idx + 1];
     const isCurrent = rev.id === g.data.current;
+    const toolBtn = ([k, icon, label, key]) => `<button class="tool" data-tool="${k}" title="${label} (${key})" aria-label="${label}"><span class="ti">${icon}</span><span class="tl">${label}</span></button>`;
     document.body.classList.add("viewer-mode");
     setTimeout(() => mountViewer(p, g, rev, query.get("pin")), 0);
     return `
@@ -700,32 +723,37 @@
           <button class="btn small" id="dvSideBtn">Details</button>
         </div>
         <div class="dv-tools" role="toolbar" aria-label="Markup tools">
-          ${TOOLS.slice(0, 1).map(([k, icon, label]) => `<button class="tool" data-tool="${k}" title="${label}" aria-label="${label}">${icon}</button>`).join("")}
+          ${toolBtn(TOOLS[0])}
           <span class="dv-markup" data-perm="drawings:standard">
-          ${TOOLS.slice(1).map(([k, icon, label]) => `<button class="tool" data-tool="${k}" title="${label}" aria-label="${label}">${icon}</button>`).join("")}
+          ${TOOLS.slice(1).map(toolBtn).join("")}
           <span class="sep"></span>
           ${COLORS.map(c => `<button class="swatch" data-color="${c}" style="background:${c}" title="Color" aria-label="Color ${c}"></button>`).join("")}
+          <select id="dvWidth" class="dv-width" title="Line thickness" aria-label="Line thickness">${WIDTHS.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select>
           <span class="sep"></span>
+          <button class="tool" id="dvEditText" title="Edit text (or double-click it)" aria-label="Edit text" hidden><span class="ti">✎</span><span class="tl">Edit text</span></button>
           <button class="tool" id="dvUndo" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
           <button class="tool" id="dvDelete" title="Delete selected (Del)" aria-label="Delete selected">🗑</button>
           </span>
           <span class="sep"></span>
-          <button class="tool" id="dvZoomOut" title="Zoom out" aria-label="Zoom out">−</button>
+          <button class="tool" id="dvZoomOut" title="Zoom out (−)" aria-label="Zoom out">−</button>
           <span id="dvZoomLbl" class="zoom-lbl">100%</span>
-          <button class="tool" id="dvZoomIn" title="Zoom in" aria-label="Zoom in">+</button>
-          <button class="tool" id="dvFit" title="Fit to screen" aria-label="Fit">⤢</button>
+          <button class="tool" id="dvZoomIn" title="Zoom in (+)" aria-label="Zoom in">+</button>
+          <button class="tool" id="dvFit" title="Fit to screen (0)" aria-label="Fit">⤢</button>
           <span class="spacer"></span>
           <button class="btn small" id="dvPublish" data-perm="drawings:standard" title="Make your markups visible to everyone">Publish</button>
         </div>
         <div class="dv-body">
           <div class="dv-wrap" id="dvWrap">
-            <div class="dv-page" id="dvPage">
-              <canvas id="dvBase"></canvas><canvas id="dvTile"></canvas>
-              <svg id="dvSvg" xmlns="http://www.w3.org/2000/svg"></svg>
-              <div class="dv-pop" id="dvPop" hidden></div>
+            <div class="dv-stage" id="dvStage">
+              <div class="dv-page" id="dvPage">
+                <canvas id="dvBase"></canvas><canvas id="dvTile"></canvas>
+                <svg id="dvSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+                <div class="dv-pop" id="dvPop" hidden></div>
+              </div>
             </div>
             <div class="dv-msg" id="dvMsg">Loading sheet…</div>
           </div>
+          <div class="dv-hint" id="dvHint" aria-live="polite"></div>
           <aside class="dv-side" id="dvSide"></aside>
         </div>
       </div>`;
@@ -736,34 +764,49 @@
     if (!wrap) return;
     const key = g.id + "|" + rev.id;
     const V = {
-      p, g, rev, key, zoom: 1, W: 0, H: 0, page: null, baseScale: 1,
-      tool: "pan", color: PM.lsGet("netpower_pm_markup_color", COLORS[0]),
-      mine: [], undo: [], selected: null, draft: null, pan: null,
+      p, g, rev, key, zoom: 1, W: 0, H: 0, mx: 0, my: 0, page: null, baseScale: 1,
+      tool: "pan", color: PM.lsGet("netpower_pm_markup_color", COLORS[0]), width: Number(PM.lsGet("netpower_pm_markup_width", 2.5)) || 2.5,
+      mine: [], undo: [], selected: null, draft: null, pan: null, drag: null, space: false,
       showOthers: PM.lsGet("netpower_pm_show_others", true),
       saveTimer: null, tileTimer: null, tileTask: null, dirty: false, destroyed: false
     };
-    const page = $("#dvPage"), svg = $("#dvSvg"), base = $("#dvBase"), tile = $("#dvTile"), msg = $("#dvMsg"), pop = $("#dvPop");
+    const stage = $("#dvStage"), page = $("#dvPage"), svg = $("#dvSvg"), base = $("#dvBase"), tile = $("#dvTile"), msg = $("#dvMsg"), pop = $("#dvPop"), hint = $("#dvHint");
+    const canMarkup = () => !!document.querySelector('.dv-tools [data-tool="pen"]');
 
     const myRecord = () => PM.me() ? Store.all("markup", p.id).find(m => m.data.drawingId === g.id && m.data.revId === rev.id && m.data.ownerId === PM.me()) : null;
     const others = () => Store.all("markup", p.id).filter(m => m.data.drawingId === g.id && m.data.revId === rev.id && m.data.ownerId !== PM.me());
     V.mine = JSON.parse(JSON.stringify((myRecord() || { data: { shapes: [] } }).data.shapes || []));
 
+    const typing = e => e.target.closest && e.target.closest("input, textarea, select, [contenteditable], .modal");
     const onKey = e => {
-      if (e.target.closest && e.target.closest("input, textarea, select, .modal")) return;
-      if ((e.key === "Delete" || e.key === "Backspace") && V.selected) { e.preventDefault(); deleteSelected(); }
-      else if (e.key === "Escape") { V.selected = null; hidePop(); draw(); }
-      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); undo(); }
+      if (typing(e)) return;
+      const k = e.key;
+      if (k === " ") { e.preventDefault(); if (!V.space) { V.space = true; syncCursor(); } return; }
+      if ((k === "Delete" || k === "Backspace") && V.selected) { e.preventDefault(); deleteSelected(); }
+      else if (k === "Escape") stopTool();
+      else if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "z") { e.preventDefault(); undo(); }
+      else if (e.ctrlKey || e.metaKey || e.altKey) return;
+      else if (k === "+" || k === "=") zoomAt(V.zoom * 1.25);
+      else if (k === "-" || k === "_") zoomAt(V.zoom / 1.25);
+      else if (k === "0") fit();
+      else {
+        const t = TOOLS.find(x => x[3] === k.toUpperCase());
+        if (t && (t[0] === "pan" || canMarkup())) setTool(t[0]);
+      }
     };
-    const onResize = () => scheduleTile();
+    const onKeyUp = e => { if (e.key === " ") { V.space = false; syncCursor(); } };
+    const onResize = () => { if (!V.W) return; const c = center(); layout(); centerOn(c.x, c.y); scheduleTile(); };
     document.addEventListener("keydown", onKey);
+    document.addEventListener("keyup", onKeyUp);
     window.addEventListener("resize", onResize);
     PM.cleanup = () => {
       V.destroyed = true;
       document.removeEventListener("keydown", onKey);
+      document.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("resize", onResize);
       if (V.tileTask) V.tileTask.cancel();
       if (V.dirty) saveNow();
-      viewState[key] = { zoom: V.zoom, sl: wrap.scrollLeft, st: wrap.scrollTop };
+      if (V.W) viewState[key] = { zoom: V.zoom, ...center() };
     };
 
     // Toolbar
@@ -772,18 +815,32 @@
       V.color = b.dataset.color;
       PM.lsSet("netpower_pm_markup_color", V.color);
       const s = selectedShape();
-      if (s && isMine(s.id)) { pushUndo(); s.color = V.color; changed(); }
+      if (s && isMine(s.id) && s.t !== "pin") { pushUndo(); s.color = V.color; changed(); }
       syncToolbar();
     });
     const on = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
+    const widthSel = $("#dvWidth");
+    if (widthSel) {
+      widthSel.value = String(V.width);
+      if (widthSel.value !== String(V.width)) widthSel.value = "2.5";
+      widthSel.onchange = () => {
+        V.width = Number(widthSel.value);
+        PM.lsSet("netpower_pm_markup_width", V.width);
+        const s = selectedShape();
+        if (s && isMine(s.id) && "w" in s) { pushUndo(); s.w = V.width; changed(); }
+        widthSel.blur();
+      };
+    }
     on("#dvUndo", undo);
     on("#dvDelete", deleteSelected);
+    on("#dvEditText", () => { const s = selectedShape(); if (s && s.t === "text" && isMine(s.id)) textEditor(null, s); });
     $("#dvZoomIn").onclick = () => zoomAt(V.zoom * 1.4);
     $("#dvZoomOut").onclick = () => zoomAt(V.zoom / 1.4);
     $("#dvFit").onclick = fit;
     on("#dvPublish", publish);
     $("#dvRev").onchange = e => { location.hash = `#/p/${p.id}/drawings/${g.id}?rev=${e.target.value}`; };
     $("#dvSideBtn").onclick = () => document.body.classList.toggle("dv-side-open");
+    updateHint();
 
     renderSide();  // available even if the PDF fails to load (e.g. to delete the sheet)
 
@@ -814,7 +871,7 @@
     msg.hidden = true;
 
     const saved = viewState[key];
-    if (saved) { setZoom(saved.zoom); wrap.scrollLeft = saved.sl; wrap.scrollTop = saved.st; } else fit();
+    if (saved) { setZoom(saved.zoom); centerOn(saved.x, saved.y); } else fit();
     syncToolbar();
     draw();
     renderSide();
@@ -822,23 +879,46 @@
     if (focusPinId) focusPin(focusPinId);
 
     wrap.addEventListener("scroll", () => scheduleTile());
+    // Mouse wheel / trackpad pinch zooms toward the cursor
     wrap.addEventListener("wheel", e => {
-      if (!(e.ctrlKey || e.metaKey)) return;
       e.preventDefault();
+      let dy = e.deltaY;
+      if (e.deltaMode === 1) dy *= 33; else if (e.deltaMode === 2) dy *= 400;
+      dy = Math.max(-300, Math.min(300, dy));
       const r = wrap.getBoundingClientRect();
-      zoomAt(V.zoom * Math.exp(-e.deltaY * 0.0025), e.clientX - r.left, e.clientY - r.top);
+      zoomAt(V.zoom * Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.0018)), e.clientX - r.left, e.clientY - r.top);
     }, { passive: false });
 
-    // ── Geometry helpers
+    // ── Geometry / layout
     function toPage(e) {
       const r = svg.getBoundingClientRect();
       return { x: (e.clientX - r.left) / V.zoom, y: (e.clientY - r.top) / V.zoom };
     }
-    function fitZoom() { return Math.max(0.05, Math.min((wrap.clientWidth - 24) / V.W, (wrap.clientHeight - 24) / V.H)); }
+    const clampPt = pt => ({ x: Math.min(Math.max(pt.x, 0), V.W), y: Math.min(Math.max(pt.y, 0), V.H) });
+    const inPage = pt => pt.x >= 0 && pt.y >= 0 && pt.x <= V.W && pt.y <= V.H;
+    function fitZoom() { return Math.max(0.05, Math.min((wrap.clientWidth - 40) / V.W, (wrap.clientHeight - 40) / V.H)); }
+    // The sheet sits on a larger "stage" so it can always be dragged around, even when it fits on screen
+    function layout() {
+      V.mx = Math.max(80, Math.round(wrap.clientWidth * 0.5));
+      V.my = Math.max(80, Math.round(wrap.clientHeight * 0.5));
+      const pw = V.W * V.zoom, ph = V.H * V.zoom;
+      page.style.width = pw + "px";
+      page.style.height = ph + "px";
+      page.style.left = V.mx + "px";
+      page.style.top = V.my + "px";
+      stage.style.width = pw + 2 * V.mx + "px";
+      stage.style.height = ph + 2 * V.my + "px";
+    }
+    function center() {  // page point at the middle of the screen
+      return { x: (wrap.scrollLeft + wrap.clientWidth / 2 - V.mx) / V.zoom, y: (wrap.scrollTop + wrap.clientHeight / 2 - V.my) / V.zoom };
+    }
+    function centerOn(x, y) {
+      wrap.scrollLeft = x * V.zoom + V.mx - wrap.clientWidth / 2;
+      wrap.scrollTop = y * V.zoom + V.my - wrap.clientHeight / 2;
+    }
     function setZoom(z) {
       V.zoom = Math.min(Math.max(z, fitZoom() * 0.5, 0.05), 12);
-      page.style.width = V.W * V.zoom + "px";
-      page.style.height = V.H * V.zoom + "px";
+      layout();
       $("#dvZoomLbl").textContent = Math.round(V.zoom / fitZoom() * 100) + "%";
       tile.style.display = "none";
       hidePop();
@@ -846,14 +926,14 @@
     function zoomAt(z, cx, cy) {
       if (!V.W) return;  // page not loaded yet
       if (cx == null) { cx = wrap.clientWidth / 2; cy = wrap.clientHeight / 2; }
-      const px = (wrap.scrollLeft + cx - page.offsetLeft) / V.zoom, py = (wrap.scrollTop + cy - page.offsetTop) / V.zoom;
+      const px = (wrap.scrollLeft + cx - V.mx) / V.zoom, py = (wrap.scrollTop + cy - V.my) / V.zoom;
       setZoom(z);
-      wrap.scrollLeft = px * V.zoom + page.offsetLeft - cx;
-      wrap.scrollTop = py * V.zoom + page.offsetTop - cy;
+      wrap.scrollLeft = px * V.zoom + V.mx - cx;
+      wrap.scrollTop = py * V.zoom + V.my - cy;
       draw();
       scheduleTile();
     }
-    function fit() { if (!V.W) return; setZoom(fitZoom()); wrap.scrollLeft = 0; wrap.scrollTop = 0; draw(); scheduleTile(); }
+    function fit() { if (!V.W) return; setZoom(fitZoom()); centerOn(V.W / 2, V.H / 2); draw(); scheduleTile(); }
 
     // Sharp tile for the visible area, rendered after scrolling/zooming settles
     function scheduleTile() {
@@ -864,8 +944,9 @@
       if (V.destroyed || !V.page) return;
       const dpr = window.devicePixelRatio || 1;
       if (V.zoom * dpr <= V.baseScale * 1.05) { tile.style.display = "none"; return; }
-      const sl = Math.max(0, wrap.scrollLeft - page.offsetLeft), st = Math.max(0, wrap.scrollTop - page.offsetTop);
-      const w = Math.min(wrap.clientWidth, V.W * V.zoom - sl), h = Math.min(wrap.clientHeight, V.H * V.zoom - st);
+      const x0 = wrap.scrollLeft - V.mx, y0 = wrap.scrollTop - V.my;
+      const sl = Math.max(0, x0), st = Math.max(0, y0);
+      const w = Math.min(V.W * V.zoom, x0 + wrap.clientWidth) - sl, h = Math.min(V.H * V.zoom, y0 + wrap.clientHeight) - st;
       if (w <= 0 || h <= 0) return;
       if (V.tileTask) V.tileTask.cancel();
       const off = document.createElement("canvas");
@@ -923,8 +1004,8 @@
     function shapeSVG(s, mine, owner) {
       const z = V.zoom;
       const c = esc(s.color || COLORS[0]);
-      const sw = s.t === "highlight" ? 14 : (s.w || 2.5);
-      const sel = s.id === V.selected ? " sel" : "";
+      const sw = s.t === "highlight" ? (s.w || 2.5) * 5.6 : (s.w || 2.5);
+      const cls = "shape" + (s.id === V.selected ? " sel" : "") + (mine && s.t !== "pin" ? " mine" : "");
       const title = `<title>${esc(owner || "")}${s.published ? "" : " (unpublished)"}</title>`;
       const hit = d => `<path d="${d}" fill="none" stroke="transparent" stroke-width="${Math.max(sw, 14 / z)}" class="hit" data-sid="${s.id}"/>`;
       const line = (x1, y1, x2, y2) => `M${x1} ${y1} L${x2} ${y2}`;
@@ -933,27 +1014,36 @@
         case "pen":
         case "highlight":
           d = "M" + s.pts.map(pt => pt[0] + " " + pt[1]).join(" L");
-          return `<g class="shape${sel}">${title}<path d="${d}" fill="none" stroke="${c}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" ${s.t === "highlight" ? 'stroke-opacity="0.35"' : ""}/>${hit(d)}</g>`;
+          return `<g class="${cls}">${title}<path d="${d}" fill="none" stroke="${c}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" ${s.t === "highlight" ? 'stroke-opacity="0.35"' : ""}/>${hit(d)}</g>`;
         case "line":
           d = line(s.x1, s.y1, s.x2, s.y2);
-          return `<g class="shape${sel}">${title}<path d="${d}" stroke="${c}" stroke-width="${sw}" stroke-linecap="round"/>${hit(d)}</g>`;
+          return `<g class="${cls}">${title}<path d="${d}" stroke="${c}" stroke-width="${sw}" stroke-linecap="round"/>${hit(d)}</g>`;
         case "arrow": {
           const a = Math.atan2(s.y2 - s.y1, s.x2 - s.x1), hl = Math.max(10, sw * 5);
           const p1 = [s.x2 - hl * Math.cos(a - 0.45), s.y2 - hl * Math.sin(a - 0.45)], p2 = [s.x2 - hl * Math.cos(a + 0.45), s.y2 - hl * Math.sin(a + 0.45)];
           d = line(s.x1, s.y1, s.x2, s.y2);
-          return `<g class="shape${sel}">${title}<path d="${d}" stroke="${c}" stroke-width="${sw}" stroke-linecap="round"/><polygon points="${s.x2},${s.y2} ${p1.join(",")} ${p2.join(",")}" fill="${c}"/>${hit(d)}</g>`;
+          return `<g class="${cls}">${title}<path d="${d}" stroke="${c}" stroke-width="${sw}" stroke-linecap="round"/><polygon points="${s.x2},${s.y2} ${p1.join(",")} ${p2.join(",")}" fill="${c}"/>${hit(d)}</g>`;
         }
         case "rect":
           d = `M${s.x1} ${s.y1} H${s.x2} V${s.y2} H${s.x1} Z`;
-          return `<g class="shape${sel}">${title}<path d="${d}" fill="none" stroke="${c}" stroke-width="${sw}"/>${hit(d)}</g>`;
+          return `<g class="${cls}">${title}<path d="${d}" fill="none" stroke="${c}" stroke-width="${sw}"/>${hit(d)}</g>`;
         case "cloud":
           d = cloudPath(s.x1, s.y1, s.x2, s.y2);
-          return `<g class="shape${sel}">${title}<path d="${d}" fill="none" stroke="${c}" stroke-width="${sw}" stroke-linejoin="round"/>${hit(`M${s.x1} ${s.y1} H${s.x2} V${s.y2} H${s.x1} Z`)}</g>`;
-        case "text":
-          return `<g class="shape${sel}">${title}<text x="${s.x}" y="${s.y}" font-size="${s.size}" fill="${c}" stroke="#fff" stroke-width="${s.size / 6}" paint-order="stroke" font-family="Helvetica, Arial, sans-serif" font-weight="600" data-sid="${s.id}">${esc(s.text)}</text></g>`;
+          return `<g class="${cls}">${title}<path d="${d}" fill="none" stroke="${c}" stroke-width="${sw}" stroke-linejoin="round"/>${hit(`M${s.x1} ${s.y1} H${s.x2} V${s.y2} H${s.x1} Z`)}</g>`;
+        case "text": {
+          if (!s.v) {  // older single-line text markups
+            return `<g class="${cls}">${title}<text x="${s.x}" y="${s.y}" font-size="${s.size}" fill="${c}" stroke="#fff" stroke-width="${s.size / 6}" paint-order="stroke" font-family="Helvetica, Arial, sans-serif" font-weight="600" data-sid="${s.id}">${esc(s.text)}</text></g>`;
+          }
+          const b = textBox(s);
+          const halo = s.fill ? "" : `stroke="#fff" stroke-width="${s.size / 7}" paint-order="stroke" stroke-linejoin="round"`;
+          const style = `white-space:pre${s.underline ? ";text-decoration:underline" : ""}`;
+          return `<g class="${cls}">${title}
+            <rect x="${s.x}" y="${s.y}" width="${b.w}" height="${b.h}" fill="${esc(s.fill || "#ffffff")}" fill-opacity="${s.fill ? 1 : 0}" stroke="${s.border ? c : "none"}" stroke-width="${Math.max(s.size / 14, 0.5)}" data-sid="${s.id}"/>
+            ${b.lines.map((l, i) => `<text x="${s.x + b.pad}" y="${s.y + b.pad + b.lh * i + s.size * 0.92}" font-size="${s.size}" font-family="${esc(fontFamily(s))}" font-weight="${s.bold ? 700 : 400}" font-style="${s.italic ? "italic" : "normal"}" fill="${c}" ${halo} style="${style}" data-sid="${s.id}">${esc(l)}</text>`).join("")}</g>`;
+        }
         case "pin": {
           const info = pinInfo(s), r = 11 / z, fs = 11 / z, lw = (info.label.length * 6.6 + 10) / z;
-          return `<g class="shape pin${sel}" data-sid="${s.id}"><title>${esc(info.label + ": " + info.title)}</title>
+          return `<g class="${cls} pin" data-sid="${s.id}"><title>${esc(info.label + ": " + info.title)}</title>
             <rect x="${s.x + r * 0.6}" y="${s.y - 8 / z}" width="${lw}" height="${16 / z}" rx="${3 / z}" fill="#fff" stroke="${info.color}" stroke-width="${1 / z}" data-sid="${s.id}"/>
             <text x="${s.x + r * 0.6 + 5 / z}" y="${s.y + 4 / z}" font-size="${fs}" fill="#1f2328" font-family="Helvetica, Arial, sans-serif" font-weight="700" data-sid="${s.id}">${esc(info.label)}</text>
             <circle cx="${s.x}" cy="${s.y}" r="${r}" fill="${info.color}" stroke="#fff" stroke-width="${2 / z}" data-sid="${s.id}"/>
@@ -963,10 +1053,23 @@
       return "";
     }
 
+    // Drag handles for the selected markup (only your own)
+    function handlesOf(s) {
+      if (!s || !isMine(s.id)) return [];
+      if (s.t === "line" || s.t === "arrow") return [["x1,y1", s.x1, s.y1], ["x2,y2", s.x2, s.y2]];
+      if (s.t === "rect" || s.t === "cloud") return [["x1,y1", s.x1, s.y1], ["x2,y1", s.x2, s.y1], ["x1,y2", s.x1, s.y2], ["x2,y2", s.x2, s.y2]];
+      if (s.t === "text" && s.v) { const b = textBox(s); return [["size", s.x + b.w, s.y + b.h]]; }
+      return [];
+    }
+    function handlesSVG() {
+      const z = V.zoom, hs = 9 / z;
+      return handlesOf(selectedShape()).map(([k, x, y]) => `<rect class="handle" data-handle="${k}" x="${x - hs / 2}" y="${y - hs / 2}" width="${hs}" height="${hs}" fill="#fff" stroke="#1d63c9" stroke-width="${1.5 / z}"/>`).join("");
+    }
+
     function draw() {
       const shapes = visibleShapes();
       shapes.sort((a, b) => (a.s.t === "pin") - (b.s.t === "pin"));
-      svg.innerHTML = shapes.map(v => shapeSVG(v.s, v.mine, v.owner)).join("") + (V.draft ? shapeSVG(V.draft, true, "") : "");
+      svg.innerHTML = shapes.map(v => shapeSVG(v.s, v.mine, v.owner)).join("") + (V.draft ? shapeSVG(V.draft, true, "") : "") + handlesSVG();
       const unpub = V.mine.filter(s => !s.published).length;
       const pubBtn = $("#dvPublish");
       if (pubBtn) {
@@ -974,28 +1077,54 @@
         pubBtn.disabled = !unpub;
         pubBtn.classList.toggle("primary", !!unpub);
       }
-      if ($("#dvDelete")) $("#dvDelete").disabled = !(V.selected && isMine(V.selected));
+      const sel = selectedShape(), mineSel = !!(sel && isMine(sel.id));
+      if ($("#dvDelete")) $("#dvDelete").disabled = !mineSel;
       if ($("#dvUndo")) $("#dvUndo").disabled = !V.undo.length;
+      if ($("#dvEditText")) $("#dvEditText").hidden = !(mineSel && sel.t === "text");
     }
 
+    function syncCursor() {
+      const c = V.pan ? "grabbing" : V.space ? "grab" : V.tool === "pan" ? "grab" : "crosshair";
+      wrap.style.cursor = c;
+      svg.style.cursor = c;
+    }
     function syncToolbar() {
       $$("[data-tool]").forEach(b => b.classList.toggle("on", b.dataset.tool === V.tool));
       $$("[data-color]").forEach(b => b.classList.toggle("on", b.dataset.color === V.color));
-      svg.style.cursor = V.tool === "pan" ? "grab" : "crosshair";
-      svg.style.touchAction = V.tool === "pan" ? "auto" : "none";
+      wrap.style.touchAction = V.tool === "pan" ? "auto" : "none";
+      wrap.classList.toggle("drawing", V.tool !== "pan");
+      syncCursor();
+    }
+    function updateHint() {
+      const t = TOOLS.find(x => x[0] === V.tool) || TOOLS[0];
+      hint.innerHTML = V.tool === "pan"
+        ? esc(t[4])
+        : `<strong>${esc(t[2])}:</strong> ${esc(t[4])}. <span class="dv-hint-stop">Right-click or Esc to stop.</span>`;
+      hint.classList.toggle("active", V.tool !== "pan");
+      hint.classList.remove("faded");
+      clearTimeout(V.hintTimer);
+      if (V.tool === "pan") V.hintTimer = setTimeout(() => hint.classList.add("faded"), 6000);
     }
     function setTool(t) {
       if (t !== "pan" && !PM.me()) { toast("Pick who you are first (top right) so your markups are saved under your name", true); PM.pickUser(); return; }
       V.tool = t;
-      V.selected = null;
+      V.draft = null;
+      if (t !== "pan") V.selected = null;
       hidePop();
       syncToolbar();
+      updateHint();
       draw();
+    }
+    // Right-click / Esc: cancel what's being drawn and go back to Select
+    function stopTool() {
+      if (V.draft) { V.draft = null; draw(); }
+      if (V.tool !== "pan") setTool("pan");
+      else { V.selected = null; hidePop(); draw(); }
     }
 
     // ── Editing
     function pushUndo() { V.undo.push(JSON.stringify(V.mine)); if (V.undo.length > 60) V.undo.shift(); }
-    function undo() { if (!V.undo.length) return; V.mine = JSON.parse(V.undo.pop()); V.selected = null; changed(); }
+    function undo() { if (!V.undo.length) return; V.mine = JSON.parse(V.undo.pop()); V.selected = null; hidePop(); changed(); }
     function deleteSelected() {
       if (!V.selected || !isMine(V.selected)) { if (V.selected) toast("You can only delete your own markups", true); return; }
       pushUndo();
@@ -1023,54 +1152,111 @@
     }
     function round(n) { return Math.round(n * 10) / 10; }
 
-    // ── Pointer interaction
-    svg.addEventListener("pointerdown", e => {
+    // Move a shape by (dx, dy) starting from its original copy o
+    function moveShape(s, o, dx, dy) {
+      if (o.pts) s.pts = o.pts.map(q => [round(q[0] + dx), round(q[1] + dy)]);
+      if ("x1" in o) { s.x1 = round(o.x1 + dx); s.y1 = round(o.y1 + dy); s.x2 = round(o.x2 + dx); s.y2 = round(o.y2 + dy); }
+      if ("x" in o) { s.x = round(o.x + dx); s.y = round(o.y + dy); }
+    }
+    function resizeShape(s, o, handle, pt) {
+      if (handle === "size") {
+        const w0 = textBox(o).w;
+        s.size = round(Math.min(Math.max(o.size * Math.max(pt.x - o.x, 1) / w0, 2), 400));
+        return;
+      }
+      const [xk, yk] = handle.split(",");
+      s[xk] = round(pt.x);
+      s[yk] = round(pt.y);
+    }
+
+    // ── Pointer interaction (on the whole drawing area, so the sheet can be dragged from anywhere)
+    function startPan(e) {
+      V.pan = { x: e.clientX, y: e.clientY, sl: wrap.scrollLeft, st: wrap.scrollTop };
+      wrap.setPointerCapture(e.pointerId);
+      syncCursor();
+    }
+    wrap.addEventListener("mousedown", e => { if (e.button === 1) e.preventDefault(); });  // no autoscroll on middle-click
+    wrap.addEventListener("contextmenu", e => { if (!e.target.closest("#dvPop")) { e.preventDefault(); stopTool(); } });
+    wrap.addEventListener("pointerdown", e => {
+      if (!V.W || e.target.closest("#dvPop")) return;
+      if (e.button === 1 || (e.button === 0 && V.space)) { e.preventDefault(); startPan(e); return; }
       if (e.button !== 0) return;
       const pt = toPage(e);
-      const hitEl = e.target.closest && e.target.closest("[data-sid]");
+      const handleEl = e.target.closest("[data-handle]");
+      const hitEl = e.target.closest("[data-sid]");
       if (V.tool === "pan") {
+        if (handleEl) {
+          const s = selectedShape();
+          V.drag = { mode: "resize", handle: handleEl.dataset.handle, s, o: JSON.parse(JSON.stringify(s)), start: pt, moved: false };
+          wrap.setPointerCapture(e.pointerId);
+          e.preventDefault();
+          return;
+        }
         if (hitEl) {
           V.selected = hitEl.dataset.sid;
           const s = selectedShape();
+          hidePop();
           draw();
-          if (s && s.t === "pin") showPop(s);
-          else { hidePop(); if (s && !isMine(s.id)) toast("Markup by " + (visibleShapes().find(v => v.s.id === s.id) || {}).owner); }
+          if (!s) return;
+          if (!isMine(s.id) && s.t !== "pin") toast("Markup by " + (visibleShapes().find(v => v.s.id === s.id) || {}).owner);
+          V.drag = { mode: "move", s, o: JSON.parse(JSON.stringify(s)), start: pt, moved: false, canMove: isMine(s.id) && e.pointerType === "mouse" };
+          if (V.drag.canMove) { wrap.setPointerCapture(e.pointerId); e.preventDefault(); }
           return;
         }
         V.selected = null;
         hidePop();
         draw();
-        if (e.pointerType === "mouse") {
-          V.pan = { x: e.clientX, y: e.clientY, sl: wrap.scrollLeft, st: wrap.scrollTop };
-          svg.setPointerCapture(e.pointerId);
-          svg.style.cursor = "grabbing";
-        }
+        if (e.pointerType === "mouse") { e.preventDefault(); startPan(e); }
         return;
       }
       if (!PM.me()) { setTool("pan"); return; }
+      if (!inPage(pt)) { if (e.pointerType === "mouse") { e.preventDefault(); startPan(e); } return; }
       const base = { id: uid("s"), color: V.color, published: false, by: PM.meName(), at: new Date().toISOString() };
       if (V.tool === "pen" || V.tool === "highlight") {
-        V.draft = { ...base, t: V.tool, w: 2.5, pts: [[round(pt.x), round(pt.y)]] };
+        V.draft = { ...base, t: V.tool, w: V.width, pts: [[round(pt.x), round(pt.y)]] };
       } else if (["line", "arrow", "rect", "cloud"].includes(V.tool)) {
-        V.draft = { ...base, t: V.tool, w: 2.5, x1: round(pt.x), y1: round(pt.y), x2: round(pt.x), y2: round(pt.y) };
+        V.draft = { ...base, t: V.tool, w: V.width, x1: round(pt.x), y1: round(pt.y), x2: round(pt.x), y2: round(pt.y) };
       } else if (V.tool === "text") {
-        textModal(pt, base);
+        e.preventDefault();
+        textEditor(pt, null, base);
         return;
       } else if (V.tool === "link") {
+        e.preventDefault();
         linkModal(pt);
         return;
       }
-      svg.setPointerCapture(e.pointerId);
+      wrap.setPointerCapture(e.pointerId);
       e.preventDefault();
     });
-    svg.addEventListener("pointermove", e => {
+    wrap.addEventListener("pointermove", e => {
       if (V.pan) {
         wrap.scrollLeft = V.pan.sl - (e.clientX - V.pan.x);
         wrap.scrollTop = V.pan.st - (e.clientY - V.pan.y);
         return;
       }
-      if (!V.draft) return;
-      const pt = toPage(e);
+      if (V.drag) {
+        const d = V.drag;
+        if (!d.canMove && d.mode === "move") return;
+        const pt = toPage(e);
+        if (!d.moved) {
+          if (Math.hypot(pt.x - d.start.x, pt.y - d.start.y) * V.zoom < 3) return;
+          pushUndo();
+          d.moved = true;
+          hidePop();
+        }
+        if (d.mode === "move") moveShape(d.s, d.o, pt.x - d.start.x, pt.y - d.start.y);
+        else resizeShape(d.s, d.o, d.handle, clampPt(pt));
+        draw();
+        return;
+      }
+      if (!V.draft) {
+        if (V.tool === "pan" && !V.space) {
+          const h = e.target.closest && e.target.closest("[data-handle], .shape.mine, .pin");
+          wrap.style.cursor = h ? (h.dataset.handle ? "nwse-resize" : h.classList.contains("pin") ? "pointer" : "move") : "grab";
+        }
+        return;
+      }
+      const pt = clampPt(toPage(e));
       if (V.draft.pts) {
         const last = V.draft.pts[V.draft.pts.length - 1];
         if (Math.hypot(pt.x - last[0], pt.y - last[1]) * V.zoom < 2) return;
@@ -1082,7 +1268,18 @@
       draw();
     });
     const endPointer = () => {
-      if (V.pan) { V.pan = null; svg.style.cursor = "grab"; return; }
+      if (V.pan) { V.pan = null; syncCursor(); return; }
+      if (V.drag) {
+        const d = V.drag;
+        V.drag = null;
+        if (d.moved) { V.lastTap = null; changed(); return; }
+        if (d.s.t === "pin") { showPop(d.s); return; }
+        // two clicks on your own text without moving it → edit (the browser's dblclick is swallowed by drag handling)
+        const now = Date.now(), last = V.lastTap;
+        V.lastTap = { sid: d.s.id, at: now };
+        if (d.s.t === "text" && isMine(d.s.id) && last && last.sid === d.s.id && now - last.at < 450) { V.lastTap = null; textEditor(null, d.s); }
+        return;
+      }
       if (!V.draft) return;
       const d = V.draft;
       V.draft = null;
@@ -1090,19 +1287,76 @@
       if (tiny) { draw(); return; }
       addShape(d);
     };
-    svg.addEventListener("pointerup", endPointer);
-    svg.addEventListener("pointercancel", endPointer);
+    wrap.addEventListener("pointerup", endPointer);
+    wrap.addEventListener("pointercancel", endPointer);
 
-    // ── Text & link modals
-    function textModal(pt, base) {
+    // ── Text editor (new text or editing existing)
+    function textDefaults() {
+      const st = PM.lsGet("netpower_pm_text_style", {}) || {};
+      const want = 14 / V.zoom;  // ~14px on screen at the current zoom
+      const size = TEXT_SIZES.reduce((a, b) => (Math.abs(b - want) < Math.abs(a - want) ? b : a));
+      return { font: FONTS[st.font] ? st.font : "arial", size, bold: !!st.bold, italic: !!st.italic, underline: !!st.underline, fill: st.fill || "", border: !!st.border };
+    }
+    function textEditor(pt, existing, base) {
+      const st = existing
+        ? { font: existing.font || "arial", size: existing.size, bold: existing.v ? !!existing.bold : true, italic: !!existing.italic, underline: !!existing.underline, fill: existing.fill || "", border: !!existing.border, color: existing.color || V.color, text: existing.text || "" }
+        : { ...textDefaults(), color: V.color, text: "" };
+      const sizes = TEXT_SIZES.includes(Number(st.size)) ? TEXT_SIZES : [...TEXT_SIZES, Number(st.size)].sort((a, b) => a - b);
       PM.openModal({
-        title: "Add Text",
+        title: existing ? "Edit Text" : "Add Text",
         noRender: true,
-        body: `<div class="field"><label for="mkText">Text</label><input id="mkText" maxlength="200"></div>`,
+        saveLabel: existing ? "Save" : "Add Text",
+        body: `
+          <div class="te">
+            <div class="te-bar" role="toolbar" aria-label="Text formatting">
+              <select id="teFont" aria-label="Font">${Object.entries(FONTS).map(([k, [label]]) => `<option value="${k}" ${k === st.font ? "selected" : ""}>${label}</option>`).join("")}</select>
+              <select id="teSize" aria-label="Font size">${sizes.map(n => `<option value="${n}" ${Number(st.size) === n ? "selected" : ""}>${n} pt</option>`).join("")}</select>
+              <button type="button" class="te-btn" data-te="bold" title="Bold" aria-label="Bold"><b>B</b></button>
+              <button type="button" class="te-btn" data-te="italic" title="Italic" aria-label="Italic"><i>I</i></button>
+              <button type="button" class="te-btn" data-te="underline" title="Underline" aria-label="Underline"><u>U</u></button>
+            </div>
+            <div class="te-row"><span class="te-l">Color</span>${COLORS.map(c => `<button type="button" class="swatch" data-tec="${c}" style="background:${c}" aria-label="Color ${c}"></button>`).join("")}</div>
+            <div class="te-row"><span class="te-l">Background</span>${TEXT_FILLS.map(([v, l]) => `<label class="inline-check"><input type="radio" name="teFill" value="${v}" ${st.fill === v ? "checked" : ""}> ${l}</label>`).join("")}
+              <label class="inline-check" style="margin-left:12px"><input type="checkbox" id="teBorder" ${st.border ? "checked" : ""}> Border</label></div>
+            <textarea id="teText" rows="4" placeholder="Type your note…" aria-label="Text">${esc(st.text)}</textarea>
+            <div class="muted help">Size is in points on the printed sheet. Press Enter for a new line. After adding, drag the text to move it or drag its corner to resize.</div>
+          </div>`,
+        onOpen: root => {
+          const ta = $("#teText", root);
+          const paint = () => {
+            ta.style.fontFamily = FONTS[st.font][1];
+            ta.style.fontSize = Math.min(Math.max(st.size * V.zoom, 12), 36) + "px";
+            ta.style.fontWeight = st.bold ? 700 : 400;
+            ta.style.fontStyle = st.italic ? "italic" : "normal";
+            ta.style.textDecoration = st.underline ? "underline" : "none";
+            ta.style.color = st.color;
+            ta.style.background = st.fill || "#fff";
+            ta.style.borderColor = st.border ? st.color : "";
+            $$("[data-te]", root).forEach(b => b.classList.toggle("on", !!st[b.dataset.te]));
+            $$("[data-tec]", root).forEach(b => b.classList.toggle("on", b.dataset.tec === st.color));
+          };
+          $("#teFont", root).onchange = e => { st.font = e.target.value; paint(); };
+          $("#teSize", root).onchange = e => { st.size = Number(e.target.value); paint(); };
+          $$("[data-te]", root).forEach(b => b.onclick = () => { st[b.dataset.te] = !st[b.dataset.te]; paint(); });
+          $$("[data-tec]", root).forEach(b => b.onclick = () => { st.color = b.dataset.tec; paint(); });
+          $$("input[name=teFill]", root).forEach(r => r.onchange = () => { st.fill = r.value; paint(); });
+          $("#teBorder", root).onchange = e => { st.border = e.target.checked; paint(); };
+          paint();
+          setTimeout(() => ta.focus(), 30);
+        },
         onSave: root => {
-          const text = $("#mkText", root).value.trim();
-          if (!text) return true;
-          addShape({ ...base, t: "text", x: round(pt.x), y: round(pt.y), text, size: round(16 / V.zoom) });
+          const text = $("#teText", root).value.replace(/\s+$/, "").slice(0, 2000);
+          const fields = { v: 2, text, font: st.font, size: st.size, bold: st.bold, italic: st.italic, underline: st.underline, fill: st.fill, border: st.border, color: st.color };
+          PM.lsSet("netpower_pm_text_style", { font: st.font, bold: st.bold, italic: st.italic, underline: st.underline, fill: st.fill, border: st.border });
+          if (existing) {
+            if (!text.trim()) { V.selected = existing.id; deleteSelected(); return true; }
+            pushUndo();
+            if (!existing.v) existing.y = round(existing.y - existing.size * 1.25);  // old text: baseline → top-left
+            Object.assign(existing, fields);
+            changed();
+          } else if (text.trim()) {
+            addShape({ ...base, t: "text", x: round(pt.x), y: round(pt.y), ...fields });
+          }
           return true;
         }
       });
@@ -1168,8 +1422,7 @@
       const v = visibleShapes().find(x => x.s.id === sid);
       if (!v) return;
       setZoom(Math.max(V.zoom, fitZoom() * 2.5));
-      wrap.scrollLeft = v.s.x * V.zoom + page.offsetLeft - wrap.clientWidth / 2;
-      wrap.scrollTop = v.s.y * V.zoom + page.offsetTop - wrap.clientHeight / 2;
+      centerOn(v.s.x, v.s.y);
       V.selected = sid;
       draw();
       showPop(v.s);
@@ -1190,7 +1443,7 @@
           <div>Mine: ${V.mine.filter(s => s.t !== "pin").length} <span class="muted">(${V.mine.filter(s => !s.published).length} unpublished)</span></div>
           <label class="inline-check" style="margin-top:6px"><input type="checkbox" id="dvOthers" ${V.showOthers ? "checked" : ""}> Show others' published markups</label>
           ${otherRecs.map(m => `<div class="muted" style="font-size:13px">${esc(m.data.ownerName)}: ${(m.data.shapes || []).filter(s => s.published && s.t !== "pin").length}</div>`).join("")}
-          <p class="muted" style="font-size:12px">Unpublished markups are only shown to you (not access-controlled — there are no logins yet).</p></div>
+          <p class="muted" style="font-size:12px">Unpublished markups are only shown to you. Click Publish to share them with the project.</p></div>
         <div class="dv-sec"><h3>Revisions</h3>
           ${revs.map(r => `<div class="dv-rev ${r.id === rev.id ? "on" : ""}"><a href="#/p/${p.id}/drawings/${g.id}?rev=${r.id}">Rev ${esc(r.rev)}</a> <span class="muted">${esc(r.setName || "")} · ${PM.fmtDate(r.drawingDate || r.at)}</span>
             ${r.id === g.data.current ? PM.pill("Current") : `<button class="btn small" data-perm="drawings:admin" data-makecur="${r.id}">Make current</button>`}</div>`).join("")}</div>

@@ -17,7 +17,7 @@ to the existing base and "Table 1"). Without it, the tracker's API returns an er
 
 Modules:
 
-- **Drawings** — upload PDF drawing sets; sheets are split out and sheet numbers/titles auto-detected from the title block (review before saving); drawing log by discipline with list/thumbnail views; revisions (new uploads of an existing sheet # become the next revision); zoomable viewer with markups (pen, highlighter, line, arrow, rectangle, revision cloud, text) that are private until published; pins that link a spot on a sheet to an RFI or punch item (or create one there); "Drawing Locations" shown on linked RFIs/punch items
+- **Drawings** — upload PDF drawing sets; sheets are split out and sheet numbers/titles auto-detected from the title block (review before saving); drawing log by discipline with list/thumbnail views; revisions (new uploads of an existing sheet # become the next revision); viewer with mouse-wheel zoom and drag-to-pan at any zoom; markups (pen, highlighter, line, arrow, box, revision cloud, formatted text boxes with font/size/bold/italic/underline/background/border) that can be moved, resized and edited, stay on until right-click/Esc, and are private until published; pins that link a spot on a sheet to an RFI or punch item (or create one there); "Drawing Locations" shown on linked RFIs/punch items
 - **Portfolio** — all projects with status, PM, schedule, contract value
 - **Company Directory** — companies and people
 - **Project Home** — open-item counts, overdue flags, "My Open Items" (ball in court), recent activity, project info and team

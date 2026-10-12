@@ -243,6 +243,9 @@ export default async function handler(req, res) {
       let records = await db.find(db.and([db.eq("Type", type), ...(project ? [db.eq("ProjectID", project)] : [])]));
       if (type === "project" && !ctx.isAdmin) records = records.filter(r => ctx.isMember(r.id));
       records = records.filter(r => r.id && canSeePrivate(ctx, r));
+      // Other people's markups: only what they've published
+      if (type === "markup") records = records.map(r => (r.data.ownerId === ctx.contactId ? r
+        : { ...r, data: { ...r.data, shapes: (r.data.shapes || []).filter(s => s && s.published) } }));
       return res.status(200).json({ ok: true, records });
     }
 
