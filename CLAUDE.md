@@ -33,3 +33,6 @@
   (fields RecID, Type, ProjectID: single line text; Data: long text).
 - Vercel Blob store connected via OIDC (`BLOB_STORE_ID`, `BLOB_WEBHOOK_PUBLIC_KEY`); `api/blob.js`
   uses presigned uploads for that, or `BLOB_READ_WRITE_TOKEN` if present.
+- `PM_SESSION_SECRET` — optional; signs PM login cookies (falls back to a value derived from `PM_AIRTABLE_TOKEN`).
+- PM logins: users are `user` records in the same Airtable table (scrypt password hashes); the first visitor
+  creates the company admin. Permission logic lives in `lib/auth.js` and is enforced in `api/pm.js` / `api/blob.js`.

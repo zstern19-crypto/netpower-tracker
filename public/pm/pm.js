@@ -54,19 +54,33 @@
 
   // ───────────────────────── Data store ─────────────────────────
   const LOCAL_KEY = "netpower_pm_records";
+
+  // All API calls go through here: a 401 means the session ended → show the sign-in screen
+  async function api(path, opts) {
+    const r = await fetch(path, opts);
+    const d = await r.json().catch(() => ({}));
+    if (r.status === 401 && (d.code === "AUTH_REQUIRED" || d.code === "SETUP_REQUIRED")) {
+      if (PM.auth) PM.auth.showLogin(d.code);
+      throw new Error("Please sign in again");
+    }
+    if (!d.ok) throw new Error(d.error || "Request failed (HTTP " + r.status + ")");
+    return d;
+  }
   const Store = {
     mode: "cloud",
     cache: {},            // id -> {id, type, projectId, data}
     loaded: new Set(),    // "type|projectId" keys already fetched
 
+    // Returns "SETUP_REQUIRED" / "AUTH_REQUIRED" when a sign-in screen is needed
     async init() {
       try {
-        const r = await fetch("/api/pm?type=project");
+        const r = await fetch("/api/pm?action=me");
         const d = await r.json().catch(() => ({}));
         if (r.status === 503 && d.code === "NOT_CONFIGURED") return this.useLocal();
+        if (r.status === 401) { PM.session = null; return d.code || "AUTH_REQUIRED"; }
         if (!d.ok) throw new Error(d.error || "HTTP " + r.status);
-        d.records.forEach(rec => { this.cache[rec.id] = rec; });
-        this.loaded.add("project|");
+        PM.session = d;
+        await this.load("project");
       } catch (e) {
         if (location.protocol === "file:" || /Failed to fetch|Unexpected token|JSON/.test(e.message)) return this.useLocal();
         throw e;
@@ -87,9 +101,7 @@
       if (this.mode === "local" || this.loaded.has(key) || this.loaded.has(type + "|")) return;
       const q = new URLSearchParams({ type });
       if (projectId) q.set("project", projectId);
-      const r = await fetch("/api/pm?" + q);
-      const d = await r.json().catch(() => ({}));
-      if (!d.ok) throw new Error(d.error || "Failed to load " + type);
+      const d = await api("/api/pm?" + q);
       d.records.forEach(rec => { this.cache[rec.id] = rec; });
       this.loaded.add(key);
     },
@@ -105,9 +117,7 @@
       this.cache[rec.id] = rec;
       if (this.mode === "local") { this.persistLocal(); return rec; }
       try {
-        const r = await fetch("/api/pm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ records: [rec] }) });
-        const d = await r.json().catch(() => ({}));
-        if (!d.ok) throw new Error(d.error || "Save failed");
+        await api("/api/pm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ records: [rec] }) });
       } catch (e) {
         if (prev) this.cache[rec.id] = prev; else delete this.cache[rec.id];
         throw e;
@@ -121,9 +131,9 @@
       if (this.mode === "local") { this.persistLocal(); return; }
       for (let i = 0; i < records.length; i += 20) {
         const batch = records.slice(i, i + 20);
-        const r = await fetch("/api/pm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ records: batch }) });
-        const d = await r.json().catch(() => ({}));
-        if (!d.ok) throw new Error((d.error || "Save failed") + ` (saved ${i} of ${records.length})`);
+        try {
+          await api("/api/pm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ records: batch }) });
+        } catch (e) { throw new Error(e.message + ` (saved ${i} of ${records.length})`); }
         if (onProgress) onProgress(Math.min(i + 20, records.length), records.length);
       }
     },
@@ -133,9 +143,7 @@
       removed.forEach(r => delete this.cache[r.id]);
       if (this.mode === "local") { this.persistLocal(); return; }
       try {
-        const r = await fetch("/api/pm?id=" + encodeURIComponent(id) + (children ? "&children=1" : ""), { method: "DELETE" });
-        const d = await r.json().catch(() => ({}));
-        if (!d.ok) throw new Error(d.error || "Delete failed");
+        await api("/api/pm?id=" + encodeURIComponent(id) + (children ? "&children=1" : ""), { method: "DELETE" });
       } catch (e) {
         removed.forEach(r => { this.cache[r.id] = r; });
         throw e;
@@ -156,8 +164,33 @@
   const TRADES = ["Electrical", "Low Voltage", "Fire Alarm", "Mechanical", "Plumbing", "Fire Protection", "Concrete", "Framing", "Drywall", "Painting", "Roofing", "Sitework", "General", "Other"];
 
   // ───────────────────────── Current user ─────────────────────────
-  const me = () => lsGet("netpower_pm_user", null);  // contact id
-  const meName = () => { const c = Store.get(me()); return c ? c.data.name : (lsGet("netpower_pm_username", "") || "Guest"); };
+  // Signed in → the session's user; local demo mode → the name picked in this browser
+  const me = () => (PM.session ? PM.session.user.contactId : lsGet("netpower_pm_user", null));  // contact id
+  const meName = () => {
+    if (PM.session) return PM.session.user.name;
+    const c = Store.get(me()); return c ? c.data.name : (lsGet("netpower_pm_username", "") || "Guest");
+  };
+
+  // ───────────────────────── Permissions ─────────────────────────
+  // Levels per project and tool: none < read < standard < admin (enforced by the server too)
+  const LEVEL_RANK = { none: 0, read: 1, standard: 2, admin: 3 };
+  const isCompanyAdmin = () => Store.mode === "local" || !!(PM.session && PM.session.isAdmin);
+  function level(projectId, tool) {
+    if (isCompanyAdmin()) return "admin";
+    if (tool === "company") return "none";
+    return ((PM.session && PM.session.perms[projectId]) || {})[tool] || "none";
+  }
+  const can = (projectId, tool, min = "read") => LEVEL_RANK[level(projectId, tool)] >= LEVEL_RANK[min];
+  // Remove controls the user may not use: data-perm="tool:level" (tool "company" = company admin)
+  function applyPerms(root) {
+    $$("[data-perm]", root).forEach(el => {
+      const [tool, min] = el.dataset.perm.split(":");
+      const ok = tool === "company" ? isCompanyAdmin() : current.project && can(current.project.id, tool, min);
+      if (!ok) el.remove();
+    });
+  }
+  // Route segment → permission tool
+  const ROUTE_TOOL = { rfis: "rfis", submittals: "submittals", dailylog: "dailylog", punch: "punch", drawings: "drawings", specs: "specs", team: "directory" };
 
   function contactName(id) { const c = Store.get(id); return c ? c.data.name : ""; }
   function companyName(id) { const c = Store.get(id); return c ? c.data.name : ""; }
@@ -320,7 +353,8 @@
     const picker = $("#projectPicker");
     const projects = Store.all("project").filter(p => p.data.status !== "Archived").sort((a, b) => (a.data.name || "").localeCompare(b.data.name || ""));
     picker.innerHTML = `<option value="">Select a project…</option>` + projects.map(p => `<option value="${p.id}" ${current.project && current.project.id === p.id ? "selected" : ""}>${esc((p.data.number ? p.data.number + " · " : "") + p.data.name)}</option>`).join("");
-    $("#userBtn").textContent = "👤 " + meName();
+    $("#userBtn").textContent = "👤 " + meName() + (PM.session ? " ▾" : "");
+    renderProjectMenu();
     const badge = $("#modeBadge");
     badge.hidden = Store.mode !== "local";
     badge.textContent = "Local demo mode";
@@ -328,15 +362,55 @@
     $$(".topnav a").forEach(a => a.classList.toggle("on", a.dataset.nav === current.nav));
   }
 
+  // Tools inside a project, in Procore's order: [route, label, permission tool, quick-create route]
+  const PROJECT_TOOLS = [
+    ["rfis", "RFIs", "rfis", "rfis/new"],
+    ["submittals", "Submittals", "submittals", "submittals/new"],
+    ["punch", "Punch List", "punch", "punch?new=1"],
+    ["dailylog", "Daily Log", "dailylog", null],
+    ["drawings", "Drawings", "drawings", null],
+    ["specs", "Specifications", "specs", null]
+  ];
+
+  // "Project Management ▾" dropdown in the top bar (inside a project)
+  function renderProjectMenu() {
+    const wrap = $("#pmMenuWrap");
+    if (!wrap) return;
+    const p = current.project;
+    if (!p) { wrap.innerHTML = ""; return; }
+    const items = PROJECT_TOOLS.filter(([, , tool]) => can(p.id, tool));
+    wrap.innerHTML = `<button class="pm-menu-btn" id="pmMenuBtn" aria-haspopup="true" aria-expanded="false">Project Management ▾</button>
+      <div class="pm-menu" id="pmMenu" hidden role="menu">
+        <div class="pm-menu-h">Project Management</div>
+        ${items.map(([route, label, tool, quick]) => `<div class="pm-menu-row"><a role="menuitem" href="#/p/${p.id}/${route}">${label}</a>${quick && can(p.id, tool, "standard") ? `<a class="pm-quick" href="#/p/${p.id}/${quick}" title="Create ${label === "Punch List" ? "punch item" : label.slice(0, -1)}" aria-label="Create ${label}">+</a>` : ""}</div>`).join("")}
+        <div class="pm-menu-sep"></div>
+        <div class="pm-menu-row"><a href="#/p/${p.id}">Project Home</a></div>
+        ${can(p.id, "directory") ? `<div class="pm-menu-row"><a href="#/p/${p.id}/team">Project Directory</a></div>` : ""}
+        ${isCompanyAdmin() && Store.mode !== "local" ? `<div class="pm-menu-row"><a href="#/p/${p.id}/permissions">Permissions</a></div>` : ""}
+      </div>`;
+    const btn = $("#pmMenuBtn"), menu = $("#pmMenu");
+    btn.onclick = e => { e.stopPropagation(); menu.hidden = !menu.hidden; btn.setAttribute("aria-expanded", String(!menu.hidden)); };
+    menu.onclick = () => { menu.hidden = true; };
+  }
+  document.addEventListener("click", e => {
+    const m = $("#pmMenu");
+    if (m && !m.hidden && !e.target.closest("#pmMenuWrap")) m.hidden = true;
+  });
+
   function renderSidebar() {
     const sb = $("#sidebar");
     const p = current.project;
     if (!p) {
       const projects = Store.all("project").filter(x => x.data.status !== "Archived").sort((a, b) => (a.data.name || "").localeCompare(b.data.name || ""));
+      const adminLinks = isCompanyAdmin() && Store.mode !== "local" ? `
+        <div class="grp">Admin</div>
+        <a href="#/admin/users" class="${location.hash.startsWith("#/admin/users") ? "on" : ""}">Users</a>
+        <a href="#/admin/templates" class="${location.hash.startsWith("#/admin/templates") ? "on" : ""}">Permission Templates</a>` : "";
       sb.innerHTML = `
         <div class="grp">Company</div>
         <a href="#/" class="${current.nav === "portfolio" ? "on" : ""}">Portfolio</a>
         <a href="#/directory" class="${current.nav === "directory" ? "on" : ""}">Directory</a>
+        ${adminLinks}
         <div class="grp">Projects</div>
         ${projects.map(x => `<a href="#/p/${x.id}">${esc(x.data.name)}</a>`).join("") || '<div class="muted" style="padding:4px 10px;font-size:13px">No projects yet</div>'}`;
       return;
@@ -349,8 +423,10 @@
       ["submittals", "Submittals", open("submittal", ["Open", "Revise and Resubmit"])],
       ["dailylog", "Daily Log", ""],
       ["punch", "Punch List", open("punch", ["Open", "Ready for Review", "Work Not Accepted"])],
-      ["team", "Project Directory", ((p.data.team || []).length) || ""]
-    ];
+      ["specs", "Specifications", Store.all("spec", p.id).length || ""],
+      ["team", "Project Directory", ((p.data.team || []).length) || ""],
+      ...(isCompanyAdmin() && Store.mode !== "local" ? [["permissions", "Permissions", ""]] : [])
+    ].filter(([k]) => !ROUTE_TOOL[k] || can(p.id, ROUTE_TOOL[k]));
     sb.innerHTML = `
       <div class="proj-name">${esc(p.data.name)}</div>
       <div class="proj-num">${esc(p.data.number || "")} ${pill(p.data.status)}</div>
@@ -381,18 +457,33 @@
         else {
           current.project = p;
           current.tool = parts[2] || "home";
-          await Promise.all(["rfi", "submittal", "dailylog", "punch", "drawing", "markup"].map(t => Store.load(t, p.id)));
+          // Load only what this user may see
+          const LOADS = [["rfi", "rfis"], ["submittal", "submittals"], ["dailylog", "dailylog"], ["punch", "punch"],
+            ["drawing", "drawings"], ["markup", "drawings"], ["drawset", "drawings"], ["spec", "specs"], ["lookup", null]];
+          await Promise.all(LOADS.filter(([, tool]) => !tool || can(p.id, tool)).map(([t]) => Store.load(t, p.id)));
           const sub = parts[3];
-          view = {
+          const F = PM.forms;
+          const guardTool = ROUTE_TOOL[current.tool];
+          const noAccess = (guardTool && !can(p.id, guardTool)) || (current.tool === "permissions" && !isCompanyAdmin());
+          view = noAccess ? () => `<div class="empty">You don't have access to this part of the project. Ask a company admin if you need it.</div>` : {
             home: () => projectHome(p),
-            rfis: () => sub ? rfiDetail(p, sub) : rfiList(p),
-            submittals: () => sub ? submittalDetail(p, sub) : submittalList(p),
+            rfis: () => sub === "new" ? F.rfiPage(p, null) : parts[4] === "edit" ? F.rfiPage(p, Store.get(sub)) : sub ? rfiDetail(p, sub) : rfiList(p),
+            submittals: () => sub === "new" ? F.submittalPage(p, null, query) : parts[4] === "edit" ? F.submittalPage(p, Store.get(sub)) : sub ? submittalDetail(p, sub) : submittalList(p),
+            specs: () => F.specsPage(p, sub),
+            permissions: () => PM.auth.projectPermissions(p),
             dailylog: () => dailyLog(p, sub),
-            punch: () => sub ? punchDetail(p, sub) : punchList(p),
+            punch: () => {
+              if (sub) return punchDetail(p, sub);
+              if (query.get("new") && can(p.id, "punch", "standard")) setTimeout(() => editPunch(p, null), 0);
+              return punchList(p);
+            },
             team: () => projectTeam(p),
             drawings: () => PM.drawings ? (sub ? PM.drawings.viewer(p, sub, query) : PM.drawings.log(p)) : `<div class="empty">Drawings module failed to load.</div>`
           }[current.tool] || (() => `<div class="empty">Unknown tool.</div>`);
         }
+      } else if (parts[0] === "admin" && PM.auth) {
+        current.nav = "admin";
+        view = () => (isCompanyAdmin() ? PM.auth.adminPage(parts[1] || "users", parts[2]) : `<div class="empty">Only company admins can open this page.</div>`);
       } else if (parts[0] === "directory") {
         current.nav = "directory";
         view = () => directory(parts[1] || "companies");
@@ -416,6 +507,7 @@
   // Generic delegated actions: elements with data-act="name" call ACTIONS[name](el)
   const ACTIONS = {};
   function bind(root) {
+    applyPerms(root);
     $$("[data-act]", root).forEach(el => {
       const ev = el.tagName === "SELECT" || el.tagName === "INPUT" ? (el.type === "search" ? "input" : "change") : "click";
       el.addEventListener(ev, e => {
@@ -525,7 +617,7 @@
     const totalValue = all.filter(p => p.data.status === "Active").reduce((s, p) => s + (Number(p.data.value) || 0), 0);
     return `
       <div class="page-head"><h1>Portfolio</h1><span class="sub">${all.length} project${all.length === 1 ? "" : "s"}</span>
-        <div class="actions"><button class="btn primary" data-act="newProject">+ Create Project</button></div></div>
+        <div class="actions"><button class="btn primary" data-perm="company:admin" data-act="newProject">+ Create Project</button></div></div>
       <div class="cards">
         <div class="card"><div class="num">${by("Active")}</div><div class="lbl">Active projects</div></div>
         <div class="card"><div class="num">${by("Bidding")}</div><div class="lbl">Bidding</div></div>
@@ -609,7 +701,7 @@
           <td><strong>${esc(c.data.name)}</strong></td><td>${esc(companyName(c.data.companyId))}</td><td>${esc(c.data.title)}</td><td>${esc(c.data.trade)}</td>
           <td>${c.data.email ? `<a href="mailto:${esc(c.data.email)}">${esc(c.data.email)}</a>` : ""}</td>
           <td class="nowrap">${c.data.phone ? `<a href="tel:${esc(c.data.phone)}">${esc(c.data.phone)}</a>` : ""}</td>
-          <td class="nowrap"><button class="btn small" data-act="editContact" data-id="${c.id}">Edit</button> <button class="btn small danger" data-act="deleteRecord" data-id="${c.id}" data-label="person">Delete</button></td></tr>`).join("");
+          <td class="nowrap"><button class="btn small" data-perm="company:admin" data-act="editContact" data-id="${c.id}">Edit</button> <button class="btn small danger" data-perm="company:admin" data-act="deleteRecord" data-id="${c.id}" data-label="person">Delete</button></td></tr>`).join("");
       };
     } else {
       LIST_RENDERERS[key] = () => {
@@ -620,7 +712,7 @@
           return `<tr>
           <td><strong>${esc(c.data.name)}</strong></td><td>${esc(c.data.companyType)}</td><td>${esc(c.data.trade)}</td>
           <td class="nowrap">${esc(c.data.phone)}</td><td>${c.data.email ? `<a href="mailto:${esc(c.data.email)}">${esc(c.data.email)}</a>` : ""}</td><td>${n}</td>
-          <td class="nowrap"><button class="btn small" data-act="editCompany" data-id="${c.id}">Edit</button> <button class="btn small danger" data-act="deleteRecord" data-id="${c.id}" data-label="company">Delete</button></td></tr>`;
+          <td class="nowrap"><button class="btn small" data-perm="company:admin" data-act="editCompany" data-id="${c.id}">Edit</button> <button class="btn small danger" data-perm="company:admin" data-act="deleteRecord" data-id="${c.id}" data-label="company">Delete</button></td></tr>`;
         }).join("");
       };
     }
@@ -629,7 +721,7 @@
       : "<th>Company</th><th>Type</th><th>Trade</th><th>Phone</th><th>Email</th><th>People</th><th></th>";
     return `
       <div class="page-head"><h1>Company Directory</h1>
-        <div class="actions"><button class="btn" data-act="newCompany">+ Add Company</button><button class="btn primary" data-act="newContact">+ Add Person</button></div></div>
+        <div class="actions"><button class="btn" data-perm="company:admin" data-act="newCompany">+ Add Company</button><button class="btn primary" data-perm="company:admin" data-act="newContact">+ Add Person</button></div></div>
       <div class="panel flush">
         <div class="toolbar">
           <a class="btn ${tab === "companies" ? "primary" : ""}" href="#/directory/companies">Companies (${Store.all("company").length})</a>
@@ -678,11 +770,11 @@
     const team = (p.data.team || []).map(t => ({ ...t, c: Store.get(t.contactId) })).filter(t => t.c);
     return `
       <div class="page-head"><h1>Project Directory</h1><span class="sub">${team.length} people</span>
-        <div class="actions"><button class="btn primary" data-act="addTeam" data-id="${p.id}">+ Add People</button></div></div>
+        <div class="actions"><button class="btn primary" data-perm="directory:admin" data-act="addTeam" data-id="${p.id}">+ Add People</button></div></div>
       <div class="panel flush"><div class="table-wrap"><table class="list"><thead><tr><th>Name</th><th>Role</th><th>Company</th><th>Email</th><th>Phone</th><th></th></tr></thead><tbody>
         ${team.length ? team.map(t => `<tr><td><strong>${esc(t.c.data.name)}</strong><div class="muted">${esc(t.c.data.title || "")}</div></td><td>${esc(t.role)}</td><td>${esc(companyName(t.c.data.companyId))}</td>
           <td>${t.c.data.email ? `<a href="mailto:${esc(t.c.data.email)}">${esc(t.c.data.email)}</a>` : ""}</td><td class="nowrap">${t.c.data.phone ? `<a href="tel:${esc(t.c.data.phone)}">${esc(t.c.data.phone)}</a>` : ""}</td>
-          <td><button class="btn small danger" data-act="removeTeam" data-id="${p.id}" data-contact="${t.contactId}">Remove</button></td></tr>`).join("")
+          <td><button class="btn small danger" data-perm="directory:admin" data-act="removeTeam" data-id="${p.id}" data-contact="${t.contactId}">Remove</button></td></tr>`).join("")
           : `<tr><td colspan="6" class="empty">No one is on this project yet. When the team is empty, assignee pickers show the whole company directory.</td></tr>`}
       </tbody></table></div></div>`;
   }
@@ -693,7 +785,7 @@
     if (["Closed", "Draft"].includes(s.data.status)) return s.data.status === "Draft" ? [s.data.managerId].filter(Boolean) : [];
     const steps = s.data.workflow || [];
     const pending = steps.find(st => !st.response || st.response === "Pending");
-    if (s.data.status === "Revise and Resubmit" || s.data.status === "Rejected") return [s.data.responsibleId].filter(Boolean);
+    if (s.data.status === "Revise and Resubmit" || s.data.status === "Rejected") return [s.data.responsibleId || s.data.receivedFromId].filter(Boolean);
     if (pending) return [pending.contactId].filter(Boolean);
     return [s.data.managerId].filter(Boolean);
   }
@@ -734,12 +826,12 @@
     const d = p.data;
     return `
       <div class="page-head"><div><div class="crumb">${esc(d.number || "")}</div><h1>${esc(d.name)}</h1></div>${pill(d.status)}
-        <div class="actions"><button class="btn" data-act="editProject" data-id="${p.id}">Edit Project</button><a class="btn primary" href="#/p/${p.id}/dailylog/${today()}">Today's Daily Log</a></div></div>
+        <div class="actions"><button class="btn" data-perm="admin:admin" data-act="editProject" data-id="${p.id}">Edit Project</button><a class="btn primary" data-perm="dailylog:read" href="#/p/${p.id}/dailylog/${today()}">Today's Daily Log</a></div></div>
       <div class="cards">
-        <a class="card" href="#/p/${p.id}/rfis"><div class="num">${openR.length}</div><div class="lbl">Open RFIs${overR ? ` · <span class="overdue">${overR} overdue</span>` : ""}</div></a>
-        <a class="card" href="#/p/${p.id}/submittals"><div class="num">${openS.length}</div><div class="lbl">Open submittals${overS ? ` · <span class="overdue">${overS} overdue</span>` : ""}</div></a>
-        <a class="card" href="#/p/${p.id}/punch"><div class="num">${openP.length}</div><div class="lbl">Open punch items${overP ? ` · <span class="overdue">${overP} overdue</span>` : ""}</div></a>
-        <a class="card" href="#/p/${p.id}/dailylog/${today()}"><div class="num">${todayWorkers}</div><div class="lbl">Workers on site today</div></a>
+        <a class="card" data-perm="rfis:read" href="#/p/${p.id}/rfis"><div class="num">${openR.length}</div><div class="lbl">Open RFIs${overR ? ` · <span class="overdue">${overR} overdue</span>` : ""}</div></a>
+        <a class="card" data-perm="submittals:read" href="#/p/${p.id}/submittals"><div class="num">${openS.length}</div><div class="lbl">Open submittals${overS ? ` · <span class="overdue">${overS} overdue</span>` : ""}</div></a>
+        <a class="card" data-perm="punch:read" href="#/p/${p.id}/punch"><div class="num">${openP.length}</div><div class="lbl">Open punch items${overP ? ` · <span class="overdue">${overP} overdue</span>` : ""}</div></a>
+        <a class="card" data-perm="dailylog:read" href="#/p/${p.id}/dailylog/${today()}"><div class="num">${todayWorkers}</div><div class="lbl">Workers on site today</div></a>
       </div>
       <div class="grid cols-2">
         <div>
@@ -764,7 +856,7 @@
               ${d.description ? `<div><div class="k">Description</div><div class="v prose">${esc(d.description)}</div></div>` : ""}
             </div>
           </div>
-          <div class="panel"><div class="section-head"><h2 style="margin:0">Team</h2><a href="#/p/${p.id}/team">Manage</a></div>
+          <div class="panel"><div class="section-head"><h2 style="margin:0">Team</h2><a data-perm="directory:read" href="#/p/${p.id}/team">Manage</a></div>
             ${(d.team || []).length ? (d.team || []).slice(0, 12).map(t => `<div style="margin:6px 0"><strong>${esc(contactName(t.contactId))}</strong> <span class="muted">${esc(t.role || "")}</span></div>`).join("") : `<p class="muted">No team members yet.</p>`}
           </div>
         </div>
@@ -772,60 +864,10 @@
   }
 
   // ───────────────────────── RFIs ─────────────────────────
-  const RFI_FIELDS = [
-    { k: "subject", label: "Subject", req: true, full: true },
-    { k: "question", label: "Question", type: "textarea", req: true },
-    { k: "suggestion", label: "Suggested Answer / Proposed Solution", type: "textarea" },
-    { k: "managerId", label: "RFI Manager", type: "contact" },
-    { k: "receivedFromId", label: "Received From", type: "contact" },
-    { k: "assignees", label: "Assignees (ball in court while Open)", type: "contacts" },
-    { k: "due", label: "Due Date", type: "date" },
-    { k: "specSection", label: "Spec Section" },
-    { k: "drawing", label: "Drawing / Sheet #" },
-    { k: "location", label: "Location" },
-    { k: "costImpact", label: "Cost Impact", type: "select", options: ["Yes", "No", "TBD", "N/A"] },
-    { k: "costAmount", label: "Cost Impact Amount ($)", type: "money" },
-    { k: "scheduleImpact", label: "Schedule Impact", type: "select", options: ["Yes", "No", "TBD", "N/A"] },
-    { k: "scheduleDays", label: "Schedule Impact (days)", type: "number" },
-    { k: "private", label: "Private (visible only to RFI manager and assignees — informational only, no access control yet)", type: "checkbox", full: true }
-  ];
-
+  // RFIs are created and edited on full pages (forms.js); from a drawing pin they open in a modal
   function editRFI(p, r, opts = {}) {
-    const isNew = !r;
-    openModal({
-      title: isNew ? "Create RFI" : `Edit RFI #${r.data.number}`,
-      noRender: !!opts.onCreated,
-      body: formHTML(RFI_FIELDS, r ? r.data : { managerId: me() || p.data.pmId || "", due: addDays(today(), 7), ...(opts.defaults || {}) }, { project: p }),
-      saveLabel: isNew ? "Create (Open)" : "Save",
-      wide: true,
-      onOpen: root => {
-        if (!isNew) return;
-        const b = document.createElement("button");
-        b.className = "btn";
-        b.textContent = "Save as Draft";
-        b.onclick = async () => {
-          try {
-            const vals = readForm(root, RFI_FIELDS);
-            const rec = { id: uid("rfi"), type: "rfi", projectId: p.id, data: { ...vals, number: nextNumber("rfi", p.id), status: "Draft", responses: [], createdBy: meName(), createdAt: new Date().toISOString() } };
-            withHistory(rec, "Created as draft");
-            if (await saveRec(rec, "Draft saved")) { closeModal(); if (opts.onCreated) opts.onCreated(rec); else location.hash = `#/p/${p.id}/rfis/${rec.id}`; }
-          } catch (e) { toast(e.message, true); }
-        };
-        $(".modal-foot", root).insertBefore(b, $("[data-save]", root));
-      },
-      onSave: async root => {
-        const vals = readForm(root, RFI_FIELDS);
-        if (isNew) {
-          const rec = { id: uid("rfi"), type: "rfi", projectId: p.id, data: { ...vals, number: nextNumber("rfi", p.id), status: "Open", responses: [], createdBy: meName(), createdAt: new Date().toISOString(), openedAt: new Date().toISOString() } };
-          withHistory(rec, "Created and opened");
-          if (!(await saveRec(rec, `RFI #${rec.data.number} created`))) return false;
-          if (opts.onCreated) opts.onCreated(rec); else location.hash = `#/p/${p.id}/rfis/${rec.id}`;
-        } else {
-          const rec = withHistory({ ...r, data: { ...r.data, ...vals } }, "Details edited");
-          return saveRec(rec, "RFI saved");
-        }
-      }
-    });
+    if (opts.onCreated) return PM.forms.rfiModal(p, opts);
+    location.hash = r ? `#/p/${p.id}/rfis/${r.id}/edit` : `#/p/${p.id}/rfis/new`;
   }
   ACTIONS.newRFI = el => editRFI(Store.get(el.dataset.project), null);
   ACTIONS.editRFI = el => { const r = Store.get(el.dataset.id); editRFI(Store.get(r.projectId), r); };
@@ -883,7 +925,7 @@
     };
     return `
       <div class="page-head"><h1>RFIs</h1><span class="sub">Requests for Information</span>
-        <div class="actions"><button class="btn" data-act="exportRFIs" data-project="${p.id}">Export CSV</button><button class="btn primary" data-act="newRFI" data-project="${p.id}">+ Create RFI</button></div></div>
+        <div class="actions"><button class="btn" data-act="exportRFIs" data-project="${p.id}">Export CSV</button><button class="btn primary" data-perm="rfis:standard" data-act="newRFI" data-project="${p.id}">+ Create RFI</button></div></div>
       <div class="panel flush">${toolbarHTML(key, RFI_STATUSES)}
         <div class="table-wrap"><table class="list"><thead><tr><th>#</th><th>Subject</th><th>Status</th><th>Ball In Court</th><th>Due</th><th>Responses</th><th>Impact</th></tr></thead>
         <tbody id="listBody">${LIST_RENDERERS[key]()}</tbody></table></div></div>`;
@@ -897,7 +939,8 @@
     const info = [
       ["Status", pill(d.status)], ["Ball In Court", esc(bicNames(rfiBIC(r))) || "—"], ["Due Date", `<span class="${isOverdue(d.due, open) ? "overdue" : ""}">${fmtDate(d.due) || "—"}</span>`],
       ["RFI Manager", esc(contactName(d.managerId)) || "—"], ["Received From", esc(contactLabel(d.receivedFromId)) || "—"], ["Assignees", esc((d.assignees || []).map(contactName).join(", ")) || "—"],
-      ["Spec Section", esc(d.specSection) || "—"], ["Drawing", esc(d.drawing) || "—"], ["Location", esc(d.location) || "—"],
+      ["Distribution List", esc((d.distribution || []).map(contactName).join(", ")) || "—"], ["Responsible Contractor", esc(companyName(d.responsibleCompanyId)) || "—"],
+      ["Spec Section", esc(d.specSection) || "—"], ["Drawing Number", esc(d.drawing) || "—"], ["Location", esc(d.location) || "—"],
       ["Cost Impact", esc(d.costImpact || "—") + (d.costAmount !== "" && d.costAmount != null ? " · " + money(d.costAmount) : "")],
       ["Schedule Impact", esc(d.scheduleImpact || "—") + (d.scheduleDays ? ` · ${esc(d.scheduleDays)} days` : "")],
       ["Created", `${fmtDate(d.createdAt)} by ${esc(d.createdBy || "")}`]
@@ -906,20 +949,21 @@
       <div class="crumb"><a href="#/p/${p.id}/rfis">RFIs</a> / #${d.number}</div>
       <div class="page-head"><h1>RFI #${d.number}: ${esc(d.subject)}</h1>
         <div class="actions">
-          ${d.status === "Draft" ? `<button class="btn primary" data-act="rfiStatus" data-id="${r.id}" data-status="Open">Open RFI</button>` : ""}
-          ${d.status === "Open" ? `<button class="btn" data-act="rfiStatus" data-id="${r.id}" data-status="Closed">Close</button>` : ""}
-          ${d.status === "Closed" ? `<button class="btn" data-act="rfiStatus" data-id="${r.id}" data-status="Open">Reopen</button>` : ""}
-          <button class="btn" data-act="editRFI" data-id="${r.id}">Edit</button>
+          ${d.status === "Draft" ? `<button class="btn primary" data-perm="rfis:standard" data-act="rfiStatus" data-id="${r.id}" data-status="Open">Open RFI</button>` : ""}
+          ${d.status === "Open" ? `<button class="btn" data-perm="rfis:standard" data-act="rfiStatus" data-id="${r.id}" data-status="Closed">Close</button>` : ""}
+          ${d.status === "Closed" ? `<button class="btn" data-perm="rfis:standard" data-act="rfiStatus" data-id="${r.id}" data-status="Open">Reopen</button>` : ""}
+          <button class="btn" data-perm="rfis:standard" data-act="editRFI" data-id="${r.id}">Edit</button>
           <button class="btn" onclick="window.print()">Print / PDF</button>
-          <button class="btn danger" data-act="deleteRecord" data-id="${r.id}" data-label="RFI" data-back="#/p/${p.id}/rfis">Delete</button>
+          <button class="btn danger" data-perm="rfis:admin" data-act="deleteRecord" data-id="${r.id}" data-label="RFI" data-back="#/p/${p.id}/rfis">Delete</button>
         </div></div>
       <div class="panel"><div class="info-grid">${info.map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join("")}</div></div>
-      <div class="panel"><h2>Question</h2><div class="prose">${esc(d.question)}</div>
+      <div class="panel"><h2>Question</h2>${PM.forms.richHTML(d.questionHtml, d.question)}
+        ${(d.attachments || []).length ? `<h3 style="margin-top:14px">Attachments</h3>${PM.forms.attachmentsView(d.attachments)}` : ""}
         ${d.suggestion ? `<h3 style="margin-top:14px">Suggested Answer</h3><div class="prose">${esc(d.suggestion)}</div>` : ""}</div>
       <div class="panel"><h2>Responses (${(d.responses || []).length})</h2>
         ${(d.responses || []).map(x => `<div class="thread"><div class="meta"><strong>${esc(x.by)}</strong> · ${fmtDateTime(x.at)} ${x.official ? pill("Official") : ""}
-          <button class="btn small no-print" data-act="rfiOfficial" data-id="${r.id}" data-resp="${x.id}">${x.official ? "Unmark official" : "Mark official"}</button></div><div class="prose">${esc(x.text)}</div></div>`).join("") || `<p class="muted">No responses yet.</p>`}
-        ${d.status !== "Draft" ? `<div class="no-print" style="margin-top:14px">
+          <button class="btn small no-print" data-perm="rfis:standard" data-act="rfiOfficial" data-id="${r.id}" data-resp="${x.id}">${x.official ? "Unmark official" : "Mark official"}</button></div><div class="prose">${esc(x.text)}</div></div>`).join("") || `<p class="muted">No responses yet.</p>`}
+        ${d.status !== "Draft" ? `<div class="no-print" style="margin-top:14px" data-perm="rfis:standard">
           <div class="field"><label for="respText">Add a response</label><textarea id="respText" placeholder="Type your response…"></textarea></div>
           <div style="display:flex;gap:16px;align-items:center;margin-top:8px;flex-wrap:wrap">
             <label class="inline-check"><input type="checkbox" id="respOfficial"> Official response</label>
@@ -940,54 +984,10 @@
   }
 
   // ───────────────────────── Submittals ─────────────────────────
-  const SUB_FIELDS = [
-    { k: "title", label: "Title", req: true, full: true },
-    { k: "specSection", label: "Spec Section", help: "e.g. 26 05 19 – Low-Voltage Conductors" },
-    { k: "subType", label: "Type", type: "select", options: SUB_TYPES },
-    { k: "managerId", label: "Submittal Manager", type: "contact" },
-    { k: "responsibleId", label: "Responsible Contractor Contact", type: "contact" },
-    { k: "receivedFromId", label: "Received From", type: "contact" },
-    { k: "submitBy", label: "Submit By", type: "date" },
-    { k: "received", label: "Received Date", type: "date" },
-    { k: "due", label: "Final Due Date", type: "date" },
-    { k: "requiredOnSite", label: "Required On-Site Date", type: "date" },
-    { k: "leadTime", label: "Lead Time (days)", type: "number" },
-    { k: "location", label: "Location" },
-    { k: "description", label: "Description", type: "textarea" },
-    { k: "approvers", label: "Approval Workflow — reviewers respond in the order you check them", type: "contacts", ordered: true }
-  ];
-
-  function editSubmittal(p, s, revisionOf) {
-    const isNew = !s;
-    const base = revisionOf ? { ...revisionOf.data, approvers: (revisionOf.data.workflow || []).map(w => w.contactId) } : s ? { ...s.data, approvers: (s.data.workflow || []).map(w => w.contactId) } : { managerId: me() || p.data.pmId || "", due: addDays(today(), 14) };
-    openModal({
-      title: revisionOf ? `New Revision of Submittal #${revisionOf.data.number}` : isNew ? "Create Submittal" : `Edit Submittal #${s.data.number}.${s.data.revision || 0}`,
-      body: formHTML(SUB_FIELDS, base, { project: p }),
-      wide: true,
-      saveLabel: isNew ? "Create (Open)" : "Save",
-      onSave: async root => {
-        const vals = readForm(root, SUB_FIELDS);
-        const approvers = vals.approvers; delete vals.approvers;
-        const prevSteps = (s && s.data.workflow) || [];
-        const workflow = approvers.map(cid => prevSteps.find(w => w.contactId === cid) || { contactId: cid, response: "Pending", comments: "", at: "" });
-        if (isNew) {
-          const number = revisionOf ? revisionOf.data.number : nextNumber("submittal", p.id);
-          const revision = revisionOf ? Math.max(...Store.all("submittal", p.id).filter(x => x.data.number === number).map(x => x.data.revision || 0)) + 1 : 0;
-          const rec = { id: uid("sub"), type: "submittal", projectId: p.id, data: { ...vals, workflow, number, revision, status: workflow.length ? "Open" : "Draft", createdBy: meName(), createdAt: new Date().toISOString() } };
-          withHistory(rec, revisionOf ? `Revision ${revision} created` : "Created");
-          if (revisionOf) {
-            const old = withHistory({ ...revisionOf, data: { ...revisionOf.data, status: "Closed", closedAt: new Date().toISOString() } }, `Closed — superseded by revision ${revision}`);
-            if (!(await saveRec(old))) return false;
-          }
-          if (!(await saveRec(rec, `Submittal #${number}.${revision} created`))) return false;
-          location.hash = `#/p/${p.id}/submittals/${rec.id}`;
-        } else {
-          const rec = withHistory({ ...s, data: { ...s.data, ...vals, workflow } }, "Details edited");
-          rec.data.status = deriveSubStatus(rec);
-          return saveRec(rec, "Submittal saved");
-        }
-      }
-    });
+  // Submittals are created and edited on full pages (forms.js)
+  function editSubmittal(p, sub, revisionOf) {
+    location.hash = revisionOf ? `#/p/${p.id}/submittals/new?revisionOf=${revisionOf.id}`
+      : sub ? `#/p/${p.id}/submittals/${sub.id}/edit` : `#/p/${p.id}/submittals/new`;
   }
 
   function deriveSubStatus(s) {
@@ -1028,7 +1028,7 @@
     const rows = [["#", "Rev", "Title", "Spec Section", "Type", "Status", "Ball In Court", "Responsible", "Submit By", "Received", "Due", "Required On Site", "Lead Time"]];
     Store.all("submittal", p.id).sort((a, b) => a.data.number - b.data.number || a.data.revision - b.data.revision).forEach(s => {
       const d = s.data;
-      rows.push([d.number, d.revision || 0, d.title, d.specSection, d.subType, d.status, bicNames(submittalBIC(s)), contactLabel(d.responsibleId), d.submitBy, d.received, d.due, d.requiredOnSite, d.leadTime]);
+      rows.push([d.number, d.revision || 0, d.title, d.specSection, d.subType, d.status, bicNames(submittalBIC(s)), subResponsible(d), d.submitBy, d.received, d.due, d.requiredOnSite, d.leadTime]);
     });
     downloadCSV(`${slug(p.data.name)}-submittals.csv`, rows);
   };
@@ -1037,7 +1037,7 @@
     const key = "sub_" + p.id;
     LIST_RENDERERS[key] = () => {
       const rows = Store.all("submittal", p.id)
-        .filter(s => matchFilter(key, s, ["#" + s.data.number, s.data.title, s.data.specSection, s.data.subType, bicNames(submittalBIC(s)), contactLabel(s.data.responsibleId)].join(" "), s.data.status !== "Closed", submittalBIC(s)))
+        .filter(s => matchFilter(key, s, ["#" + s.data.number, s.data.title, s.data.specSection, s.data.subType, bicNames(submittalBIC(s)), subResponsible(s.data)].join(" "), s.data.status !== "Closed", submittalBIC(s)))
         .sort((a, b) => (a.data.specSection || "").localeCompare(b.data.specSection || "") || a.data.number - b.data.number || a.data.revision - b.data.revision);
       if (!rows.length) return `<tr><td colspan="8" class="empty">No submittals found.</td></tr>`;
       return rows.map(s => {
@@ -1048,17 +1048,19 @@
           <td class="nowrap"><a href="#/p/${p.id}/submittals/${s.id}">#${d.number}.${d.revision || 0}</a></td>
           <td>${esc(d.title)}</td><td>${esc(d.subType)}</td><td>${pill(d.status)}</td>
           <td>${esc(bicNames(submittalBIC(s)))}</td>
-          <td>${esc(contactLabel(d.responsibleId))}</td>
+          <td>${esc(subResponsible(d))}</td>
           <td class="nowrap ${isOverdue(d.due, open) ? "overdue" : ""}">${fmtDate(d.due)}</td></tr>`;
       }).join("");
     };
     return `
       <div class="page-head"><h1>Submittals</h1>
-        <div class="actions"><button class="btn" data-act="exportSubmittals" data-project="${p.id}">Export CSV</button><button class="btn primary" data-act="newSubmittal" data-project="${p.id}">+ Create Submittal</button></div></div>
+        <div class="actions"><button class="btn" data-act="exportSubmittals" data-project="${p.id}">Export CSV</button><button class="btn primary" data-perm="submittals:standard" data-act="newSubmittal" data-project="${p.id}">+ Create Submittal</button></div></div>
       <div class="panel flush">${toolbarHTML(key, SUB_STATUSES)}
         <div class="table-wrap"><table class="list"><thead><tr><th>Spec Section</th><th>#</th><th>Title</th><th>Type</th><th>Status</th><th>Ball In Court</th><th>Responsible</th><th>Due</th></tr></thead>
         <tbody id="listBody">${LIST_RENDERERS[key]()}</tbody></table></div></div>`;
   }
+
+  function subResponsible(d) { return companyName(d.responsibleCompanyId) || contactLabel(d.responsibleId); }
 
   function submittalDetail(p, id) {
     const s = Store.get(id);
@@ -1071,8 +1073,12 @@
     const info = [
       ["Status", pill(d.status)], ["Ball In Court", esc(bicNames(submittalBIC(s))) || "—"], ["Final Due", `<span class="${isOverdue(d.due, open) ? "overdue" : ""}">${fmtDate(d.due) || "—"}</span>`],
       ["Spec Section", esc(d.specSection) || "—"], ["Type", esc(d.subType) || "—"], ["Location", esc(d.location) || "—"],
-      ["Submittal Manager", esc(contactName(d.managerId)) || "—"], ["Responsible Contractor", esc(contactLabel(d.responsibleId)) || "—"], ["Received From", esc(contactLabel(d.receivedFromId)) || "—"],
+      ["Submittal Manager", esc(contactName(d.managerId)) || "—"], ["Responsible Contractor", esc(subResponsible(d)) || "—"], ["Received From", esc(contactLabel(d.receivedFromId)) || "—"],
+      ["Submittal Package", esc(d.package) || "—"], ["Cost Code", esc(d.costCode) || "—"], ["Issue Date", fmtDate(d.issueDate) || "—"],
       ["Submit By", fmtDate(d.submitBy) || "—"], ["Received", fmtDate(d.received) || "—"], ["Required On Site", fmtDate(d.requiredOnSite) || "—"],
+      ["Distribution List", esc((d.distribution || []).map(contactName).join(", ")) || "—"],
+      ["Linked Drawings", (d.linkedDrawings || []).map(id => Store.get(id)).filter(Boolean).map(g => `<a href="#/p/${p.id}/drawings/${g.id}">${esc(g.data.number)}</a>`).join(", ") || "—"],
+      ["Private", d.private ? "Yes" : "No"],
       ["Lead Time", d.leadTime ? esc(d.leadTime) + " days" : "—"],
       ["Order By", d.requiredOnSite && d.leadTime ? fmtDate(addDays(d.requiredOnSite, -Number(d.leadTime))) : "—"],
       ["Created", `${fmtDate(d.createdAt)} by ${esc(d.createdBy || "")}`]
@@ -1081,21 +1087,22 @@
       <div class="crumb"><a href="#/p/${p.id}/submittals">Submittals</a> / #${d.number}.${d.revision || 0}</div>
       <div class="page-head"><h1>Submittal #${d.number}.${d.revision || 0}: ${esc(d.title)}</h1>
         <div class="actions">
-          ${d.status === "Draft" ? `<button class="btn primary" data-act="subStatus" data-id="${s.id}" data-status="Open">Send for Review</button>` : ""}
-          ${["Revise and Resubmit", "Rejected"].includes(d.status) ? `<button class="btn primary" data-act="reviseSubmittal" data-id="${s.id}">Create Revision</button>` : ""}
-          ${d.status !== "Closed" && d.status !== "Draft" ? `<button class="btn" data-act="subStatus" data-id="${s.id}" data-status="Closed">Close</button>` : ""}
-          ${d.status === "Closed" ? `<button class="btn" data-act="subStatus" data-id="${s.id}" data-status="Open">Reopen</button>` : ""}
-          <button class="btn" data-act="editSubmittal" data-id="${s.id}">Edit</button>
+          ${d.status === "Draft" ? `<button class="btn primary" data-perm="submittals:standard" data-act="subStatus" data-id="${s.id}" data-status="Open">Send for Review</button>` : ""}
+          ${["Revise and Resubmit", "Rejected"].includes(d.status) ? `<button class="btn primary" data-perm="submittals:standard" data-act="reviseSubmittal" data-id="${s.id}">Create Revision</button>` : ""}
+          ${d.status !== "Closed" && d.status !== "Draft" ? `<button class="btn" data-perm="submittals:standard" data-act="subStatus" data-id="${s.id}" data-status="Closed">Close</button>` : ""}
+          ${d.status === "Closed" ? `<button class="btn" data-perm="submittals:standard" data-act="subStatus" data-id="${s.id}" data-status="Open">Reopen</button>` : ""}
+          <button class="btn" data-perm="submittals:standard" data-act="editSubmittal" data-id="${s.id}">Edit</button>
           <button class="btn" onclick="window.print()">Print / PDF</button>
-          <button class="btn danger" data-act="deleteRecord" data-id="${s.id}" data-label="submittal" data-back="#/p/${p.id}/submittals">Delete</button>
+          <button class="btn danger" data-perm="submittals:admin" data-act="deleteRecord" data-id="${s.id}" data-label="submittal" data-back="#/p/${p.id}/submittals">Delete</button>
         </div></div>
       <div class="panel"><div class="info-grid">${info.map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join("")}</div>
-        ${d.description ? `<h3 style="margin-top:16px">Description</h3><div class="prose">${esc(d.description)}</div>` : ""}</div>
+        ${d.description || d.descriptionHtml ? `<h3 style="margin-top:16px">Description</h3>${PM.forms.richHTML(d.descriptionHtml, d.description)}` : ""}
+        ${(d.attachments || []).length ? `<h3 style="margin-top:16px">Attachments</h3>${PM.forms.attachmentsView(d.attachments)}` : ""}</div>
       <div class="panel"><h2>Approval Workflow</h2>
         ${steps.length ? `<div class="table-wrap"><table class="list"><thead><tr><th>Step</th><th>Approver</th><th>Response</th><th>Comments</th><th>Returned</th></tr></thead><tbody>
           ${steps.map((w, i) => `<tr><td>${i + 1}</td><td>${esc(contactLabel(w.contactId))}</td><td>${pill(w.response || "Pending")}</td><td class="prose">${esc(w.comments)}</td><td class="nowrap">${w.at ? fmtDate(w.at) : ""}</td></tr>`).join("")}
         </tbody></table></div>` : `<p class="muted">No approvers. Edit the submittal to add a workflow.</p>`}
-        ${pendingIdx >= 0 && d.status === "Open" ? `<div class="no-print" style="margin-top:14px;border-top:1px solid var(--line);padding-top:14px">
+        ${pendingIdx >= 0 && d.status === "Open" ? `<div class="no-print" data-perm="submittals:standard" style="margin-top:14px;border-top:1px solid var(--line);padding-top:14px">
           <h3>Respond as ${esc(contactName(steps[pendingIdx].contactId))} (step ${pendingIdx + 1})</h3>
           <div class="form-grid">
             <div class="field"><label for="stepResp">Response</label><select id="stepResp">${SUB_RESPONSES.map(x => `<option>${x}</option>`).join("")}</select></div>
@@ -1173,9 +1180,9 @@
             <tbody>${(d[sec.k] || []).map(row => subRowHTML(sec, row)).join("")}</tbody></table></div></div>`).join("")}
           <div class="panel"><h2>General Notes</h2><textarea id="logNotes" placeholder="Notes, issues, instructions received…">${esc(d.notes || "")}</textarea></div>
           <div class="no-print" style="display:flex;gap:8px;flex-wrap:wrap">
-            <button class="btn primary" id="saveLog">Save Daily Log</button>
-            ${rec ? `<button class="btn" id="lockLog">${d.locked ? "Unlock" : "Mark Approved"}</button>
-            <button class="btn danger" data-act="deleteRecord" data-id="${rec.id}" data-label="daily log" data-back="#/p/${p.id}/dailylog/${date}">Delete Log</button>` : ""}
+            <button class="btn primary" id="saveLog" data-perm="dailylog:standard">Save Daily Log</button>
+            ${rec ? `<button class="btn" id="lockLog" data-perm="dailylog:admin">${d.locked ? "Unlock" : "Mark Approved"}</button>
+            <button class="btn danger" data-perm="dailylog:admin" data-act="deleteRecord" data-id="${rec.id}" data-label="daily log" data-back="#/p/${p.id}/dailylog/${date}">Delete Log</button>` : ""}
           </div>
         </div>
         <div class="no-print">
@@ -1225,7 +1232,7 @@
         toast("Copied manpower from " + fmtDate(prev.data.date) + " — review and save");
       }
     });
-    if (locked) $$("input, select, textarea, [data-addrow], [data-rmrow], [data-copyprev]", form).forEach(el => { el.disabled = true; });
+    if (locked || !can(p.id, "dailylog", "standard")) $$("input, select, textarea, [data-addrow], [data-rmrow], [data-copyprev]", form).forEach(el => { el.disabled = true; });
     const save = $("#saveLog");
     if (locked) save.disabled = true;
     save.onclick = async () => {
@@ -1339,7 +1346,7 @@
     const c = s => all.filter(x => x.data.status === s).length;
     return `
       <div class="page-head"><h1>Punch List</h1>
-        <div class="actions"><button class="btn" data-act="exportPunch" data-project="${p.id}">Export CSV</button><button class="btn primary" data-act="newPunch" data-project="${p.id}">+ Create Item</button></div></div>
+        <div class="actions"><button class="btn" data-act="exportPunch" data-project="${p.id}">Export CSV</button><button class="btn primary" data-perm="punch:standard" data-act="newPunch" data-project="${p.id}">+ Create Item</button></div></div>
       <div class="cards">${PUNCH_STATUSES.map(s => `<div class="card"><div class="num">${c(s)}</div><div class="lbl">${s}</div></div>`).join("")}</div>
       <div class="panel flush">${toolbarHTML(key, PUNCH_STATUSES)}
         <div class="table-wrap"><table class="list"><thead><tr><th>#</th><th>Title</th><th>Status</th><th>Priority</th><th>Location</th><th>Trade</th><th>Ball In Court</th><th>Due</th></tr></thead>
@@ -1369,20 +1376,20 @@
       <div class="crumb"><a href="#/p/${p.id}/punch">Punch List</a> / #${d.number}</div>
       <div class="page-head"><h1>#${d.number}: ${esc(d.title)}</h1>
         <div class="actions">
-          ${statusBtns.map(([s, label, cls]) => `<button class="btn ${cls}" data-act="punchStatus" data-id="${x.id}" data-status="${s}">${label}</button>`).join("")}
-          <button class="btn" data-act="editPunch" data-id="${x.id}">Edit</button>
-          <button class="btn danger" data-act="deleteRecord" data-id="${x.id}" data-children="1" data-label="punch item" data-back="#/p/${p.id}/punch">Delete</button>
+          ${statusBtns.map(([s, label, cls]) => `<button class="btn ${cls}" data-perm="punch:standard" data-act="punchStatus" data-id="${x.id}" data-status="${s}">${label}</button>`).join("")}
+          <button class="btn" data-perm="punch:standard" data-act="editPunch" data-id="${x.id}">Edit</button>
+          <button class="btn danger" data-perm="punch:admin" data-act="deleteRecord" data-id="${x.id}" data-children="1" data-label="punch item" data-back="#/p/${p.id}/punch">Delete</button>
         </div></div>
       <div class="panel"><div class="info-grid">${info.map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join("")}</div>
         ${d.description ? `<h3 style="margin-top:16px">Description</h3><div class="prose">${esc(d.description)}</div>` : ""}</div>
       <div class="panel"><div class="section-head"><h2 style="margin:0">Photos (${photos.length})</h2>
-        <label class="btn small no-print">+ Add Photos<input type="file" accept="image/*" multiple hidden id="photoInput" data-id="${x.id}"></label></div>
+        <label class="btn small no-print" data-perm="punch:standard">+ Add Photos<input type="file" accept="image/*" multiple hidden id="photoInput" data-id="${x.id}"></label></div>
         ${photos.length ? `<div class="photos">${photos.map(ph => `<div class="photo"><img src="${esc(ph.data.src)}" alt="${esc(ph.data.caption || "Punch photo")}" data-full="${ph.id}">
-          <div class="cap"><span>${esc(ph.data.by || "")} · ${fmtDate(ph.data.at)}</span><button class="btn small danger no-print" data-act="deleteRecord" data-id="${ph.id}" data-label="photo">✕</button></div></div>`).join("")}</div>` : `<p class="muted">No photos yet.</p>`}
+          <div class="cap"><span>${esc(ph.data.by || "")} · ${fmtDate(ph.data.at)}</span><button class="btn small danger no-print" data-perm="punch:admin" data-act="deleteRecord" data-id="${ph.id}" data-label="photo">✕</button></div></div>`).join("")}</div>` : `<p class="muted">No photos yet.</p>`}
       </div>
       <div class="panel"><h2>Comments</h2>
         ${(d.comments || []).map(c => `<div class="thread"><div class="meta"><strong>${esc(c.by)}</strong> · ${fmtDateTime(c.at)} ${c.status ? pill(c.status) : ""}</div><div class="prose">${esc(c.text)}</div></div>`).join("") || `<p class="muted">No comments yet.</p>`}
-        <div class="no-print" style="margin-top:12px">
+        <div class="no-print" style="margin-top:12px" data-perm="punch:standard">
           <textarea id="punchComment" placeholder="Add a comment (also attached to the next status change)…"></textarea>
           <button class="btn" style="margin-top:8px" data-act="punchComment" data-id="${x.id}">Add Comment</button></div>
       </div>
@@ -1470,19 +1477,23 @@
   // ───────────────────────── Extension API (used by drawings.js) ─────────────────────────
   Object.assign(PM, {
     $, $$, esc, slug, uid, today, addDays, fmtDate, fmtDateTime, pill, toast, lsGet, lsSet,
-    Store, saveRec, withHistory, me, meName, contactName, render, bind, ACTIONS,
-    openModal, closeModal, formHTML, readForm, editRFI, editPunch, pickUser: () => pickUser()
+    Store, saveRec, withHistory, me, meName, contactName, contactLabel, companyName, contacts, companies, projectContacts,
+    render, bind, applyPerms, ACTIONS, api, level, can, isCompanyAdmin, nextNumber, historyPanel, rfiBIC, submittalBIC,
+    deriveSubStatus, isOverdue, bicNames, money, TRADES, SUB_TYPES, SUB_STATUSES, SUB_RESPONSES,
+    current: () => current,
+    openModal, closeModal, formHTML, readForm, editRFI, editPunch, editSubmittal, pickUser: () => pickUser()
   });
 
   // ───────────────────────── Boot ─────────────────────────
-  $("#userBtn").onclick = pickUser;
+  $("#userBtn").onclick = e => (PM.session && PM.auth ? PM.auth.userMenu(e) : pickUser());
   $("#menuBtn").onclick = () => document.body.classList.toggle("menu-open");
   $("#projectPicker").onchange = e => { if (e.target.value) location.hash = "#/p/" + e.target.value; };
   window.addEventListener("hashchange", render);
 
-  const boot = () => Store.init().then(async () => {
+  const boot = () => Store.init().then(async need => {
+    if (need) { PM.auth.showLogin(need); return; }
     await render();
-    if (!me()) pickUser();
+    if (Store.mode === "local" && !me()) pickUser();
   }).catch(e => {
     $("#main").innerHTML = `<div class="panel"><h2>Could not connect to the database</h2><p class="muted">${esc(e.message)}</p><button class="btn" onclick="location.reload()">Retry</button></div>`;
   });

@@ -21,14 +21,30 @@ Modules:
 - **Portfolio** — all projects with status, PM, schedule, contract value
 - **Company Directory** — companies and people
 - **Project Home** — open-item counts, overdue flags, "My Open Items" (ball in court), recent activity, project info and team
-- **RFIs** — draft/open/closed, assignees, due dates, cost/schedule impact, threaded responses with official answers, print/PDF, CSV export
-- **Submittals** — spec section, type, sequential approval workflow, Revise & Resubmit → revisions (#1.0, #1.1…), lead time / order-by date, CSV export
+- **RFIs** — Procore-style create page (rich-text question, attachments, assignees, distribution list, responsible contractor, location, private RFIs), draft/open/closed, assignees, due dates, cost/schedule impact, threaded responses with official answers, print/PDF, CSV export
+- **Submittals** — Procore-style create page (specification, number.revision, package, cost code, location, linked drawings, distribution, attachments, per-step due dates), spec section, type, sequential approval workflow, Revise & Resubmit → revisions (#1.0, #1.1…), lead time / order-by date, CSV export
 - **Daily Log** — one log per day: weather, manpower (copy from previous day), work performed, equipment, deliveries, visitors/inspections, safety, delays, notes; approve/lock; CSV export
 - **Punch List** — assignee/manager workflow (Open → Ready for Review → Closed / Work Not Accepted), priority, photos, comments, CSV export
+- **Specifications** — spec sections per project (used by submittals)
 - **Project Directory** — project team with roles
+- **Project Management menu** — dropdown in the top bar listing the project's tools, with quick-create (⊕) links
 - Change history on every item
 
-There are no logins yet: each user picks their name (stored in their browser).
+### Logins and permissions
+
+When the database is configured, everyone signs in with email + password (checked on the server).
+
+- **First visit:** the first person to open `/pm` creates the **company admin** account. Do this right after deploying.
+- **Users** (company admins only, user menu → Users): add people, set passwords, make company admins, deactivate.
+- **Permission Templates** (company admins): None / Read Only / Standard / Admin per tool. Defaults: Project Admin,
+  Project Manager, Foreman, Field Crew.
+- **Project → Permissions** (company admins): add users to a project with a template, or customize per person.
+- Users only see projects they were added to, and only the tools their permission allows. Private RFIs/submittals are
+  visible only to tool admins and the people on them. Every save, delete and file upload is checked on the server.
+- Sign-ins last 30 days. Optional env var `PM_SESSION_SECRET` (any long random string) signs the login cookies;
+  without it a secret is derived from `PM_AIRTABLE_TOKEN` (so changing that token signs everyone out).
+
+The Material Tracker (`/`) still has no login.
 
 ### Airtable setup
 
@@ -53,11 +69,12 @@ Drawing PDFs are too large for Airtable, so they are stored in Vercel Blob:
    `api/blob.js` supports both.
 2. Redeploy.
 
-Files are uploaded straight from the browser (up to 500 MB per PDF) using short-lived tokens from `api/blob.js`.
-Blob URLs are public but unguessable (random suffix). Check Vercel's Blob pricing/limits for your plan.
+Files are uploaded straight from the browser (up to 500 MB per PDF; 100 MB per RFI/submittal/punch/daily log/spec
+attachment) using short-lived tokens from `api/blob.js`, which first checks the user's project permissions.
+Private stores are read through short-lived signed links. Check Vercel's Blob pricing/limits for your plan.
 
 If these variables are missing, `/pm` runs in **Local demo mode** (badge in the top bar):
-data is saved only in that browser and is not shared.
+data is saved only in that browser and is not shared, and there are no logins.
 
 In local demo mode, drawing PDFs are kept in the browser's IndexedDB.
 

@@ -69,7 +69,12 @@
 
   let blobMode = null;  // "presigned" | "token", from GET /api/blob
   async function storeFile(projectId, file, onProgress) {
-    const safe = (file.name.replace(/[^A-Za-z0-9._-]+/g, "_").slice(-120)) || "drawing.pdf";
+    return uploadFile(`drawings/${projectId}`, file, onProgress, "application/pdf");
+  }
+
+  // Upload any file into a folder of the store (drawings/<project> or attachments/<project>/<tool>)
+  async function uploadFile(folder, file, onProgress, contentType) {
+    const safe = (file.name.replace(/[^A-Za-z0-9._-]+/g, "_").slice(-120)) || "file";
     if (Store.mode === "local") {
       const key = uid("file");
       await IDB.put(key, file);
@@ -85,10 +90,10 @@
     await loadScript("/pm/vendor/vercel-blob-client-2.8.0.js");
     const fn = blobMode === "presigned" ? window.VercelBlob.uploadPresigned : window.VercelBlob.upload;
     // Unique pathname per upload (presigned uploads don't add a random suffix)
-    const res = await fn(`drawings/${projectId}/${uid("f")}-${safe}`, file, {
+    const res = await fn(`${folder}/${uid("f")}-${safe}`, file, {
       access: "public",
       handleUploadUrl: "/api/blob",
-      contentType: "application/pdf",
+      contentType: contentType || file.type || "application/octet-stream",
       multipart: file.size > 20 * 1024 * 1024,
       onUploadProgress: e => { if (onProgress) onProgress(e.percentage); }
     });
@@ -237,27 +242,78 @@
     openModal();
 
     function openModal() {
+      let chosen = [];   // PDFs picked in step 1
+      let stage = "choose";
+      const setNames = [...new Set(Store.all("drawset", p.id).map(s => s.data.name))].sort();
       PM.openModal({
         title: "Upload Drawings",
         wide: true,
         noRender: true,
-        saveLabel: "Upload",
+        saveLabel: "Process",
         body: `
-          <div class="form-grid">
-            <div class="field"><label for="dsName">Drawing Set Name <span class="req">*</span></label><input id="dsName" placeholder="e.g. IFC Set, Bulletin 3, ASI 2"></div>
-            <div class="field"><label for="dsRev">Default Revision</label><input id="dsRev" value="0"></div>
-            <div class="field"><label for="dsDate">Drawing Date</label><input id="dsDate" type="date"></div>
-            <div class="field"><label for="dsRecv">Received Date</label><input id="dsRecv" type="date" value="${PM.today()}"></div>
-            <div class="field full"><label for="dsFiles">PDF files <span class="req">*</span></label><input id="dsFiles" type="file" accept="application/pdf,.pdf" multiple>
-              <div class="muted" style="font-size:12px;margin-top:4px">Multi-page sets are split into sheets automatically. Sheet numbers and titles are read from the title block when the PDF has text — please check them.</div></div>
+          <div id="dsChoose">
+            <div class="dropzone" id="dsDrop" tabindex="0" role="button" aria-label="Attach PDF files">
+              <span class="btn">Attach Files</span><div class="muted">or Drag &amp; Drop</div>
+              <input id="dsFiles" type="file" accept="application/pdf,.pdf" multiple hidden>
+            </div>
+            <ul class="attach-list" id="dsChosen"></ul>
+            <div class="field" style="margin-top:16px"><label for="dsName" class="big-label">Drawing Set <span class="req">*</span></label>
+              <div class="muted help">Group and label drawings into a collection as they are issued to keep them organized.</div>
+              <input id="dsName" list="dsSets" placeholder="Select or Create set" autocomplete="off">
+              <datalist id="dsSets">${setNames.map(n => `<option value="${esc(n)}">`).join("")}</datalist></div>
+            <div class="form-grid" style="margin-top:14px">
+              <div class="field"><label for="dsDate" class="big-label">Default Drawing Date</label><div class="muted help">Enter the date the drawing was authored.</div><input id="dsDate" type="date"></div>
+              <div class="field"><label for="dsRecv" class="big-label">Default Received Date</label><div class="muted help">Enter the date the drawings were received from the design team.</div><input id="dsRecv" type="date"></div>
+            </div>
+            <details class="adv" style="margin-top:14px"><summary class="big-label">Advanced Options</summary>
+              <div class="form-grid" style="margin-top:10px">
+                <div class="field"><label for="dsRev">Default Revision</label><input id="dsRev" value="0"><div class="muted help">Used for new sheets. Sheets that already exist get their next revision number.</div></div>
+              </div></details>
+            <div class="ds-req"><span class="req-note">* Required fields</span><div id="dsNeedFile" class="field-err">You must attach a file</div></div>
           </div>
           <div id="dsStatus" class="muted" style="margin:12px 0"></div>
           <div id="dsReview"></div>`,
         onOpen: root => {
-          $("#dsFiles", root).addEventListener("change", e => processFiles(root, Array.from(e.target.files || [])));
+          const drop = $("#dsDrop", root), input = $("#dsFiles", root), saveBtn = $("[data-save]", root);
+          const sync = () => {
+            $("#dsChosen", root).innerHTML = chosen.map((f, i) => `<li>📄 ${esc(f.name)} <span class="muted">${(f.size / 1048576).toFixed(1)} MB</span> <button type="button" class="btn small" data-unpick="${i}" aria-label="Remove ${esc(f.name)}">✕</button></li>`).join("");
+            $("#dsNeedFile", root).hidden = chosen.length > 0;
+            saveBtn.disabled = stage === "choose" && (!chosen.length || !$("#dsName", root).value.trim());
+          };
+          const pick = list => {
+            const pdfs = [...list].filter(f => /\.pdf$/i.test(f.name) || f.type === "application/pdf");
+            if (pdfs.length < list.length) toast("Only PDF files can be uploaded as drawings", true);
+            chosen = chosen.concat(pdfs);
+            sync();
+          };
+          drop.onclick = () => input.click();
+          drop.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); } };
+          input.onchange = () => { pick(input.files); input.value = ""; };
+          drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+          drop.ondragleave = () => drop.classList.remove("over");
+          drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); pick(e.dataTransfer.files); };
+          $("#dsChosen", root).onclick = e => { const b = e.target.closest("[data-unpick]"); if (b) { chosen.splice(Number(b.dataset.unpick), 1); sync(); } };
+          $("#dsName", root).oninput = sync;
           root.addEventListener("input", e => { if (e.target.matches("[data-row] [data-f=number]")) refreshRowStatus(root); });
+          // Step 2 → back to step 1
+          const back = document.createElement("button");
+          back.className = "btn"; back.textContent = "Back"; back.hidden = true; back.id = "dsBack";
+          back.onclick = () => { stage = "choose"; $("#dsChoose", root).hidden = false; $("#dsReview", root).innerHTML = ""; $("#dsStatus", root).textContent = ""; back.hidden = true; saveBtn.textContent = "Process"; sync(); };
+          $(".modal-foot", root).insertBefore(back, saveBtn);
+          root._next = async () => {
+            if (stage === "choose") {
+              if (!chosen.length || !$("#dsName", root).value.trim()) { sync(); return false; }
+              saveBtn.disabled = true;
+              await processFiles(root, chosen);
+              saveBtn.disabled = false;
+              if (files.length) { stage = "review"; $("#dsChoose", root).hidden = true; back.hidden = false; saveBtn.textContent = "Upload"; }
+              return false;
+            }
+            return save(root);
+          };
+          sync();
         },
-        onSave: root => save(root)
+        onSave: root => root._next()
       });
     }
 
@@ -482,7 +538,7 @@
           <td>${esc(g.data.title || "")}</td><td>${esc(r.rev || "")}</td>
           <td class="nowrap">${PM.fmtDate(r.drawingDate) || ""}</td><td>${esc(r.setName || "")}</td>
           <td>${(g.data.revisions || []).length}</td><td>${pins[g.id] || ""}</td>
-          <td><button class="btn small danger" data-delsheet="${g.id}" title="Delete sheet ${esc(g.data.number)}" aria-label="Delete sheet ${esc(g.data.number)}">🗑</button></td></tr>`;
+          <td><button class="btn small danger" data-perm="drawings:admin" data-delsheet="${g.id}" title="Delete sheet ${esc(g.data.number)}" aria-label="Delete sheet ${esc(g.data.number)}">🗑</button></td></tr>`;
       }).join("")}</tbody></table></div>`;
   }
 
@@ -505,7 +561,7 @@
     setTimeout(() => wireLog(p), 0);
     return `
       <div class="page-head"><h1>Drawings</h1><span class="sub">${all.length} sheet${all.length === 1 ? "" : "s"}</span>
-        <div class="actions"><button class="btn primary" id="dwgUpload">+ Upload Drawings</button></div></div>
+        <div class="actions"><button class="btn primary" id="dwgUpload" data-perm="drawings:standard">+ Upload Drawings</button></div></div>
       <div class="panel flush">
         <div class="toolbar">
           <input type="search" id="dwgSearch" placeholder="Search sheet # or title…" value="${esc(logFilter.q)}">
@@ -521,15 +577,15 @@
           ${sets.map(s => `<tr><td><strong>${esc(s.data.name)}</strong></td><td>${esc(s.data.fileName)}</td><td>${s.data.sheets}</td><td class="nowrap">${PM.fmtDate(s.data.drawingDate)}</td>
             <td class="nowrap">${PM.fmtDate(s.data.at)} · ${esc(s.data.uploadedBy || "")}</td>
             <td class="nowrap"><button class="btn small" data-dl="${esc(s.data.fileUrl)}" data-name="${esc(s.data.fileName)}">Download PDF</button>
-              <button class="btn small danger" data-delset="${s.id}">Delete set</button></td></tr>`).join("")}
+              <button class="btn small danger" data-perm="drawings:admin" data-delset="${s.id}">Delete set</button></td></tr>`).join("")}
         </tbody></table></div>` : `<p class="muted">No drawing sets uploaded yet.</p>`}
       </div>`;
   }
 
   function wireLog(p) {
+    if (!$("#dwgSearch")) return;
     const up = $("#dwgUpload");
-    if (!up) return;
-    up.onclick = () => uploadModal(p);
+    if (up) up.onclick = () => uploadModal(p);
     $("#dwgSearch").addEventListener("input", e => { logFilter.q = e.target.value; $("#dwgRows").innerHTML = logRows(p); PM.bind($("#dwgRows")); });
     $("#dwgDisc").addEventListener("change", e => { logFilter.discipline = e.target.value; $("#dwgRows").innerHTML = logRows(p); PM.bind($("#dwgRows")); });
     $$("[data-view]").forEach(b => b.onclick = () => { PM.lsSet("netpower_pm_dwg_view", b.dataset.view); PM.render(); });
@@ -644,19 +700,22 @@
           <button class="btn small" id="dvSideBtn">Details</button>
         </div>
         <div class="dv-tools" role="toolbar" aria-label="Markup tools">
-          ${TOOLS.map(([k, icon, label]) => `<button class="tool" data-tool="${k}" title="${label}" aria-label="${label}">${icon}</button>`).join("")}
+          ${TOOLS.slice(0, 1).map(([k, icon, label]) => `<button class="tool" data-tool="${k}" title="${label}" aria-label="${label}">${icon}</button>`).join("")}
+          <span class="dv-markup" data-perm="drawings:standard">
+          ${TOOLS.slice(1).map(([k, icon, label]) => `<button class="tool" data-tool="${k}" title="${label}" aria-label="${label}">${icon}</button>`).join("")}
           <span class="sep"></span>
           ${COLORS.map(c => `<button class="swatch" data-color="${c}" style="background:${c}" title="Color" aria-label="Color ${c}"></button>`).join("")}
           <span class="sep"></span>
           <button class="tool" id="dvUndo" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
           <button class="tool" id="dvDelete" title="Delete selected (Del)" aria-label="Delete selected">🗑</button>
+          </span>
           <span class="sep"></span>
           <button class="tool" id="dvZoomOut" title="Zoom out" aria-label="Zoom out">−</button>
           <span id="dvZoomLbl" class="zoom-lbl">100%</span>
           <button class="tool" id="dvZoomIn" title="Zoom in" aria-label="Zoom in">+</button>
           <button class="tool" id="dvFit" title="Fit to screen" aria-label="Fit">⤢</button>
           <span class="spacer"></span>
-          <button class="btn small" id="dvPublish" title="Make your markups visible to everyone">Publish</button>
+          <button class="btn small" id="dvPublish" data-perm="drawings:standard" title="Make your markups visible to everyone">Publish</button>
         </div>
         <div class="dv-body">
           <div class="dv-wrap" id="dvWrap">
@@ -716,12 +775,13 @@
       if (s && isMine(s.id)) { pushUndo(); s.color = V.color; changed(); }
       syncToolbar();
     });
-    $("#dvUndo").onclick = undo;
-    $("#dvDelete").onclick = deleteSelected;
+    const on = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
+    on("#dvUndo", undo);
+    on("#dvDelete", deleteSelected);
     $("#dvZoomIn").onclick = () => zoomAt(V.zoom * 1.4);
     $("#dvZoomOut").onclick = () => zoomAt(V.zoom / 1.4);
     $("#dvFit").onclick = fit;
-    $("#dvPublish").onclick = publish;
+    on("#dvPublish", publish);
     $("#dvRev").onchange = e => { location.hash = `#/p/${p.id}/drawings/${g.id}?rev=${e.target.value}`; };
     $("#dvSideBtn").onclick = () => document.body.classList.toggle("dv-side-open");
 
@@ -909,11 +969,13 @@
       svg.innerHTML = shapes.map(v => shapeSVG(v.s, v.mine, v.owner)).join("") + (V.draft ? shapeSVG(V.draft, true, "") : "");
       const unpub = V.mine.filter(s => !s.published).length;
       const pubBtn = $("#dvPublish");
-      pubBtn.textContent = unpub ? `Publish (${unpub})` : "Published ✓";
-      pubBtn.disabled = !unpub;
-      pubBtn.classList.toggle("primary", !!unpub);
-      $("#dvDelete").disabled = !(V.selected && isMine(V.selected));
-      $("#dvUndo").disabled = !V.undo.length;
+      if (pubBtn) {
+        pubBtn.textContent = unpub ? `Publish (${unpub})` : "Published ✓";
+        pubBtn.disabled = !unpub;
+        pubBtn.classList.toggle("primary", !!unpub);
+      }
+      if ($("#dvDelete")) $("#dvDelete").disabled = !(V.selected && isMine(V.selected));
+      if ($("#dvUndo")) $("#dvUndo").disabled = !V.undo.length;
     }
 
     function syncToolbar() {
@@ -1131,19 +1193,20 @@
           <p class="muted" style="font-size:12px">Unpublished markups are only shown to you (not access-controlled — there are no logins yet).</p></div>
         <div class="dv-sec"><h3>Revisions</h3>
           ${revs.map(r => `<div class="dv-rev ${r.id === rev.id ? "on" : ""}"><a href="#/p/${p.id}/drawings/${g.id}?rev=${r.id}">Rev ${esc(r.rev)}</a> <span class="muted">${esc(r.setName || "")} · ${PM.fmtDate(r.drawingDate || r.at)}</span>
-            ${r.id === g.data.current ? PM.pill("Current") : `<button class="btn small" data-makecur="${r.id}">Make current</button>`}</div>`).join("")}</div>
+            ${r.id === g.data.current ? PM.pill("Current") : `<button class="btn small" data-perm="drawings:admin" data-makecur="${r.id}">Make current</button>`}</div>`).join("")}</div>
         <div class="dv-sec"><h3>Sheet</h3>
           <div class="muted" style="font-size:13px">Discipline: ${esc(g.data.discipline || "—")}</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
-            <button class="btn small" id="dvEdit">Edit info</button>
+            <button class="btn small" id="dvEdit" data-perm="drawings:admin">Edit info</button>
             <button class="btn small" data-dl="${esc(rev.fileUrl)}" data-page="${rev.page}" data-name="${esc(g.data.number)}.pdf">Open PDF</button>
-            <button class="btn small danger" id="dvDel">Delete sheet</button></div></div>
+            <button class="btn small danger" id="dvDel" data-perm="drawings:admin">Delete sheet</button></div></div>
         ${historyHTML()}`;
       $$("[data-focus]", side).forEach(el => el.onclick = () => { document.body.classList.remove("dv-side-open"); focusPin(el.dataset.focus); });
       $("#dvOthers", side).onchange = e => { V.showOthers = e.target.checked; PM.lsSet("netpower_pm_show_others", V.showOthers); V.selected = null; hidePop(); draw(); renderSide(); };
+      PM.applyPerms(side);
       $$("[data-makecur]", side).forEach(b => b.onclick = () => makeCurrent(b.dataset.makecur));
-      $("#dvEdit", side).onclick = editInfo;
-      $("#dvDel", side).onclick = deleteSheet;
+      if ($("#dvEdit", side)) $("#dvEdit", side).onclick = editInfo;
+      if ($("#dvDel", side)) $("#dvDel", side).onclick = deleteSheet;
     }
     function historyHTML() {
       const h = (g.data.history || []).slice().reverse().slice(0, 15);
@@ -1190,5 +1253,6 @@
     }
   }
 
-  PM.drawings = { log, viewer, linksPanel, detectSheet, disciplineFor };
+  PM.drawings = { log, viewer, linksPanel, detectSheet, disciplineFor, sheetsOf, currentRev };
+  PM.files = { upload: uploadFile, readableUrl, fileObjectUrl, deleteFiles };
 })();
