@@ -466,12 +466,18 @@
             ["drawing", "drawings"], ["markup", "drawings"], ["drawset", "drawings"], ["spec", "specs"], ["subpackage", "submittals"], ["jphoto", "photos"], ["logsetting", "dailylog"], ["lookup", null]];
           await Promise.all(LOADS.filter(([, tool]) => !tool || can(p.id, tool)).map(([t]) => Store.load(t, p.id)));
           const sub = parts[3];
+          // A link to something created elsewhere (e.g. by Claude) since this page loaded: fetch it again
+          const SUB_TYPE = { rfis: "rfi", submittals: "submittal", punch: "punch", drawings: "drawing" }[current.tool];
+          if (SUB_TYPE && sub && /^[a-z]+_[a-z0-9]+$/.test(sub) && !Store.get(sub) && Store.mode !== "local" && can(p.id, ROUTE_TOOL[current.tool])) {
+            Store.loaded.delete(SUB_TYPE + "|" + p.id);
+            await Store.load(SUB_TYPE, p.id);
+          }
           const F = PM.forms;
           const guardTool = ROUTE_TOOL[current.tool];
           const noAccess = (guardTool && !can(p.id, guardTool)) || (current.tool === "permissions" && !isCompanyAdmin());
           view = noAccess ? () => `<div class="empty">You don't have access to this part of the project. Ask a company admin if you need it.</div>` : {
             home: () => projectHome(p),
-            rfis: () => sub === "new" ? F.rfiPage(p, null) : parts[4] === "edit" ? F.rfiPage(p, Store.get(sub)) : sub ? rfiDetail(p, sub) : rfiList(p),
+            rfis: () => sub === "new" ? F.rfiPage(p, null) : parts[4] === "edit" ? F.rfiPage(p, Store.get(sub)) : sub ? rfiDetail(p, sub, query) : rfiList(p),
             submittals: () => sub === "packages" ? (parts[4] ? F.packageDetail(p, parts[4]) : F.packagesPage(p)) : sub === "new" ? F.submittalPage(p, null, query) : parts[4] === "edit" ? F.submittalPage(p, Store.get(sub)) : sub ? submittalDetail(p, sub) : submittalList(p),
             specs: () => F.specsPage(p, sub),
             permissions: () => PM.auth.projectPermissions(p),
@@ -890,6 +896,52 @@
     const rec = withHistory({ ...r, data: { ...r.data, status, ...(status === "Closed" ? { closedAt: new Date().toISOString() } : {}), ...(status === "Open" && !r.data.openedAt ? { openedAt: new Date().toISOString() } : {}) } }, `Status changed to ${status}`);
     if (await saveRec(rec, "RFI " + status.toLowerCase())) render();
   };
+  // Add photos to an RFI (phone camera or library); also opened from Claude's "Add photos" link
+  ACTIONS.rfiAddPhotos = el => { const r = Store.get(el.dataset.id); addRfiPhotos(Store.get(r.projectId), r.id); };
+  function addRfiPhotos(p, rfiId) {
+    const r0 = Store.get(rfiId);
+    let files = [];
+    openModal({
+      title: `Add photos — RFI #${r0.data.number}`,
+      saveLabel: "Add to RFI",
+      noRender: true,
+      body: `<label class="dropzone" style="display:block;cursor:pointer"><div style="font-size:28px">📷</div><strong>Take or choose photos</strong><div class="muted">${esc(r0.data.subject)}</div>
+          <input type="file" id="rpFiles" accept="image/*" multiple hidden></label>
+        <div class="ph-preview" id="rpPrev"></div><div id="rpStatus" class="muted"></div>`,
+      onOpen: root => {
+        $("#rpFiles", root).onchange = e => {
+          files = files.concat([...e.target.files]);
+          $("#rpPrev", root).innerHTML = files.map(f => `<div class="ph-pv"><img src="${URL.createObjectURL(f)}" alt=""></div>`).join("");
+          e.target.value = "";
+        };
+      },
+      onSave: async root => {
+        if (!files.length) { toast("Take or choose at least one photo", true); return false; }
+        const btn = $("[data-save]", root), st = $("#rpStatus", root);
+        btn.disabled = true;
+        const added = [];
+        try {
+          for (let i = 0; i < files.length; i++) {
+            st.textContent = `Uploading ${i + 1} of ${files.length}…`;
+            const blob = await new Promise((res, rej) => { const img = new Image(), u = URL.createObjectURL(files[i]); img.onload = () => { const k = Math.min(1, 2400 / Math.max(img.width, img.height)), c = document.createElement("canvas"); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k); c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(u); c.toBlob(b => (b ? res(b) : rej(new Error("Couldn't read photo"))), "image/jpeg", 0.86); }; img.onerror = () => rej(new Error(files[i].name + " isn't a photo")); img.src = u; });
+            const name = files[i].name.replace(/\.[^.]+$/, "") + ".jpg";
+            const url = await PM.files.upload(`attachments/${p.id}/rfis`, new File([blob], name, { type: "image/jpeg" }), null, "image/jpeg");
+            added.push({ name, size: blob.size, type: "image/jpeg", url, by: meName(), at: new Date().toISOString() });
+          }
+          const r = Store.get(rfiId);
+          await Store.save(withHistory({ ...r, data: { ...r.data, attachments: [...(r.data.attachments || []), ...added] } }, `${added.length} photo${added.length > 1 ? "s" : ""} added`));
+        } catch (e) {
+          btn.disabled = false; st.textContent = "";
+          if (added.length) PM.files.deleteFiles(added.map(a => a.url)).catch(() => {});
+          toast("Photos not added: " + e.message, true);
+          return false;
+        }
+        toast(`${added.length} photo${added.length > 1 ? "s" : ""} added to RFI #${r0.data.number}`);
+        if (location.hash.includes("addPhotos")) location.hash = location.hash.replace(/\?addPhotos=1$/, ""); else setTimeout(render, 0);
+        return true;
+      }
+    });
+  }
   ACTIONS.rfiSetStatus = async el => {
     const r = Store.get(el.dataset.id);
     if (!r || el.value === r.data.status) return;
@@ -950,9 +1002,10 @@
         <tbody id="listBody">${LIST_RENDERERS[key]()}</tbody></table></div></div>`;
   }
 
-  function rfiDetail(p, id) {
+  function rfiDetail(p, id, query) {
     const r = Store.get(id);
     if (!r || r.type !== "rfi") return `<div class="empty">RFI not found. <a href="#/p/${p.id}/rfis">Back to RFIs</a></div>`;
+    if (query && query.get("addPhotos") && can(p.id, "rfis", "standard")) setTimeout(() => addRfiPhotos(p, r.id), 0);
     const d = r.data;
     const open = d.status !== "Closed";
     const info = [
@@ -978,7 +1031,7 @@
           <button class="btn danger" data-perm="rfis:admin" data-act="deleteRecord" data-id="${r.id}" data-label="RFI" data-back="#/p/${p.id}/rfis">Delete</button>
         </div></div>
       <div class="panel"><div class="info-grid">${info.map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join("")}</div></div>
-      <div class="panel"><h2>Question</h2>${PM.forms.richHTML(d.questionHtml, d.question)}
+      <div class="panel"><div class="panel-head"><h2>Question</h2><button class="btn small no-print" data-perm="rfis:standard" data-act="rfiAddPhotos" data-id="${r.id}">📷 Add photos</button></div>${PM.forms.richHTML(d.questionHtml, d.question)}
         ${(d.attachments || []).length ? `<h3 style="margin-top:14px">Attachments</h3>${PM.forms.attachmentsView(d.attachments)}` : ""}
         ${d.suggestion ? `<h3 style="margin-top:14px">Suggested Answer</h3><div class="prose">${esc(d.suggestion)}</div>` : ""}</div>
       <div class="panel"><h2>Responses (${(d.responses || []).length})</h2>
