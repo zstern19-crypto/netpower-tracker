@@ -49,3 +49,12 @@
 - Drawing uploads are held as `drawset` records with `status: "pending"` + `pendingSheets` until a drawings admin
   publishes them (`publishSet` in drawings.js); the server hides pending sets from non-admins.
 - Tools (`tool` records) are company-wide; non-admins may only change checkout/condition and append history.
+- `setting` records are company-wide (admins write, everyone reads): `set_letterhead` (PDF cover sheet), `set_jobsteps`
+  (Job Tracker steps), `set_manpower` (headcount). `jobstatus` = one per project (`jst_<projectId>`), needs Admin tool
+  ≥ standard to write, any member reads. `mpplan` = typed manpower chart numbers per project (`mpp_<projectId>`).
+  `inspection` records use the `inspections` tool.
+- RFI/submittal PDFs are built in the browser with pdf-lib (`public/pm/vendor/pdf-lib-1.17.1.min.js`, loaded on demand);
+  logo is `public/pm/img/netpower-logo.jpg` (taken from the owner's Procore PDF).
+- Assistant attachments use Anthropic's Files API (GA, no beta header); the browser keeps file ids signed with
+  `auth.tag`, and the server refuses unsigned ones (never trust file ids from the client).
+- WhatsApp integration and Outlook Graph permission: owner said "later".
