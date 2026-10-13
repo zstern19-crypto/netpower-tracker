@@ -480,7 +480,7 @@
     m.className = "user-menu bell-menu";
     if (notesP) { m.innerHTML = `<div class="um-head"><strong>Notifications</strong></div><div class="muted" style="padding:10px 14px">Loading…</div>`; document.body.appendChild(m); await notesP; m.remove(); if (!document.body.contains(m) && $("#bellMenu")) return; }
     m.innerHTML = `<div class="um-head"><strong>Notifications</strong></div>` + (notes.length
-      ? notes.map(x => `<a href="${esc(x.href || "#")}" class="note-${esc(x.level)}">${x.kind === "cert" ? "🪪" : x.kind === "drawings" ? "📐" : "📋"} ${esc(x.text)}</a>`).join("")
+      ? notes.map(x => `<a href="${esc(x.href || "#")}" class="note-${esc(x.level)}">${x.kind === "cert" ? "🪪" : x.kind === "drawings" ? "📐" : x.kind === "tool" ? "🧰" : "📋"} ${esc(x.text)}</a>`).join("")
       : `<div class="muted" style="padding:10px 14px">You're all caught up.</div>`);
     document.body.appendChild(m);
     const close = ev => { if (!ev.target.closest("#bellMenu")) { m.remove(); document.removeEventListener("click", close); } };
@@ -587,5 +587,5 @@
   }
 
   const invalidate = () => { peopleCache = null; };
-  PM.people = { invalidate, page, avatar, loadPeople, profileFieldsHTML, wireProfileFields, readProfile, myProfile, crewPanel, crewOn, dailyLogPanels, decorateTopbar, refreshBell, missingLogs, certStatus };
+  PM.people = { invalidate, photoToDataURL, page, avatar, loadPeople, profileFieldsHTML, wireProfileFields, readProfile, myProfile, crewPanel, crewOn, dailyLogPanels, decorateTopbar, refreshBell, missingLogs, certStatus };
 })();

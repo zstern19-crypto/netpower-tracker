@@ -360,6 +360,7 @@
     badge.textContent = "Local demo mode";
     badge.title = "Airtable is not configured. Data is saved only in this browser.";
     if (PM.people) PM.people.decorateTopbar();
+    if (PM.tools) PM.tools.decorateTopbar();
     $$(".topnav a").forEach(a => a.classList.toggle("on", a.dataset.nav === current.nav));
   }
 
@@ -488,6 +489,9 @@
       } else if (parts[0] === "admin" && PM.auth) {
         current.nav = "admin";
         view = () => (isCompanyAdmin() ? PM.auth.adminPage(parts[1] || "users", parts[2]) : `<div class="empty">Only company admins can open this page.</div>`);
+      } else if (parts[0] === "tools" && PM.tools) {
+        current.nav = "tools";
+        view = () => PM.tools.page(query);
       } else if (parts[0] === "manpower" && PM.people) {
         current.nav = "manpower";
         view = () => PM.people.page(parts[1], query);

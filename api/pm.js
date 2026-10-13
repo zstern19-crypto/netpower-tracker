@@ -19,7 +19,9 @@ import * as notify from "../lib/notify.js";
 
 const { ID_RE } = db;
 const { TYPE_TOOL, ensure, httpError } = auth;
-const TYPES = ["project", "company", "contact", "lookup", "member", "permtemplate", "cert", ...Object.keys(TYPE_TOOL)];
+const TYPES = ["project", "company", "contact", "lookup", "member", "permtemplate", "cert", "tool", ...Object.keys(TYPE_TOOL)];
+// Tool tracker: everyone may check tools out/in (these fields); only company admins edit the inventory
+const TOOL_MOVE_FIELDS = ["checkout", "history", "condition", "conditionNote", "updatedAt"];
 const PRIVATE_TYPES = ["rfi", "submittal"];
 
 // ── Helpers ──
@@ -42,7 +44,7 @@ export function canSeePrivate(ctx, rec) {
 }
 
 export async function checkRead(ctx, type, project) {
-  if (type === "project" || type === "company" || type === "contact" || type === "cert") return;  // certs are filtered per user below
+  if (type === "project" || type === "company" || type === "contact" || type === "cert" || type === "tool") return;  // certs are filtered per user below
   if (type === "deploy" && !project) return ensure(ctx.isAdmin || ctx.projectIds.some(pid => ctx.can(pid, "manpower", "read")));
   if (type === "member" || type === "permtemplate") return ensure(ctx.isAdmin);
   ensure(project && ID_RE.test(project), "A project is required");
@@ -57,6 +59,16 @@ export async function checkWrite(ctx, rec, stored) {
   const t = rec.type;
   if (t === "user") ensure(false);
   if (t === "company" || t === "contact" || t === "member" || t === "permtemplate") return ensure(ctx.isAdmin, "Only company admins can change this");
+  if (t === "tool") {
+    ensure(!rec.projectId, "Tools are company-wide");
+    if (ctx.isAdmin) return;
+    ensure(stored, "Only company admins can add tools");
+    const changed = Object.keys({ ...stored.data, ...rec.data }).filter(k => JSON.stringify(stored.data[k]) !== JSON.stringify(rec.data[k]));
+    ensure(changed.every(k => TOOL_MOVE_FIELDS.includes(k)), "Only company admins can edit tool details");
+    // History can only grow (no rewriting who had what)
+    ensure((rec.data.history || []).length >= (stored.data.history || []).length && JSON.stringify((rec.data.history || []).slice(0, (stored.data.history || []).length)) === JSON.stringify(stored.data.history || []), "Tool history can't be changed");
+    return;
+  }
   if (t === "cert") {
     ensure(!rec.projectId, "Certifications are company-wide");
     ensure(ID_RE.test(rec.data.userId || ""), "Pick who the certification belongs to");
@@ -88,6 +100,7 @@ async function checkDelete(ctx, rec) {
   const t = rec.type;
   if (["project", "company", "contact", "member", "permtemplate", "user"].includes(t)) return ensure(ctx.isAdmin, "Only company admins can delete this");
   if (t === "cert") return ensure(ctx.isAdmin || rec.data.userId === ctx.user.id, "You can only delete your own certifications");
+  if (t === "tool") return ensure(ctx.isAdmin, "Only company admins can delete tools");
   const pid = await projectOf(t, rec.projectId);
   ensure(pid, "Not found");
   if (t === "lookup") return ensure(ctx.can(pid, "admin", "admin"));
