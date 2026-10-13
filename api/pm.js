@@ -19,7 +19,7 @@ import * as notify from "../lib/notify.js";
 
 const { ID_RE } = db;
 const { TYPE_TOOL, ensure, httpError } = auth;
-const TYPES = ["project", "company", "contact", "lookup", "member", "permtemplate", "cert", "tool", ...Object.keys(TYPE_TOOL)];
+const TYPES = ["project", "company", "contact", "lookup", "member", "permtemplate", "cert", "tool", "setting", ...Object.keys(TYPE_TOOL)];
 // Tool tracker: everyone may check tools out/in (these fields); only company admins edit the inventory
 const TOOL_MOVE_FIELDS = ["checkout", "history", "condition", "conditionNote", "updatedAt"];
 const PRIVATE_TYPES = ["rfi", "submittal"];
@@ -44,13 +44,14 @@ export function canSeePrivate(ctx, rec) {
 }
 
 export async function checkRead(ctx, type, project) {
-  if (type === "project" || type === "company" || type === "contact" || type === "cert" || type === "tool") return;  // certs are filtered per user below
-  if (type === "deploy" && !project) return ensure(ctx.isAdmin || ctx.projectIds.some(pid => ctx.can(pid, "manpower", "read")));
+  if (type === "project" || type === "company" || type === "contact" || type === "cert" || type === "tool" || type === "setting") return;  // certs are filtered per user below
+  if ((type === "deploy" || type === "mpplan") && !project) return ensure(ctx.isAdmin || ctx.projectIds.some(pid => ctx.can(pid, "manpower", "read")));
+  if (type === "jobstatus" && !project) return;  // filtered to the user's projects below
   if (type === "member" || type === "permtemplate") return ensure(ctx.isAdmin);
   ensure(project && ID_RE.test(project), "A project is required");
   const pid = await projectOf(type, project);
   ensure(pid, "Not found");
-  if (type === "lookup") return ensure(ctx.isMember(pid));
+  if (type === "lookup" || type === "jobstatus") return ensure(ctx.isMember(pid));
   ensure(ctx.can(pid, TYPE_TOOL[type], "read"));
 }
 
@@ -59,6 +60,7 @@ export async function checkWrite(ctx, rec, stored) {
   const t = rec.type;
   if (t === "user") ensure(false);
   if (t === "company" || t === "contact" || t === "member" || t === "permtemplate") return ensure(ctx.isAdmin, "Only company admins can change this");
+  if (t === "setting") { ensure(!rec.projectId, "Settings are company-wide"); return ensure(ctx.isAdmin, "Only company admins can change company settings"); }
   if (t === "tool") {
     ensure(!rec.projectId, "Tools are company-wide");
     if (ctx.isAdmin) return;
@@ -98,7 +100,7 @@ export async function checkWrite(ctx, rec, stored) {
 
 async function checkDelete(ctx, rec) {
   const t = rec.type;
-  if (["project", "company", "contact", "member", "permtemplate", "user"].includes(t)) return ensure(ctx.isAdmin, "Only company admins can delete this");
+  if (["project", "company", "contact", "member", "permtemplate", "user", "setting"].includes(t)) return ensure(ctx.isAdmin, "Only company admins can delete this");
   if (t === "cert") return ensure(ctx.isAdmin || rec.data.userId === ctx.user.id, "You can only delete your own certifications");
   if (t === "tool") return ensure(ctx.isAdmin, "Only company admins can delete tools");
   const pid = await projectOf(t, rec.projectId);
@@ -344,7 +346,8 @@ export default async function handler(req, res) {
       // Drawing uploads waiting for review are only visible to drawing admins
       if (type === "drawset") records = records.filter(r => r.data.status !== "pending" || ctx.can(r.projectId, "drawings", "admin"));
       if (type === "cert" && !ctx.isAdmin) records = records.filter(r => r.data.userId === ctx.user.id);
-      if (type === "deploy" && !project) records = records.filter(r => ctx.can(r.projectId, "manpower", "read"));
+      if ((type === "deploy" || type === "mpplan") && !project) records = records.filter(r => ctx.can(r.projectId, "manpower", "read"));
+      if (type === "jobstatus" && !project) records = records.filter(r => ctx.isMember(r.projectId));
       records = records.filter(r => r.id && canSeePrivate(ctx, r));
       // Other people's markups: only what they've published
       if (type === "markup") records = records.map(r => (r.data.ownerId === ctx.contactId ? r

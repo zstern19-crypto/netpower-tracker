@@ -4,13 +4,17 @@
 //   GET  /api/assistant                    → { allowed, access, capUsd, monthCostUsd }
 //   POST /api/assistant  { messages, text, projectId? }  → { messages, reply, actions, usage }
 //   POST /api/assistant?action=settings  { access: "admins"|"everyone", capUsd }   (company admins)
+//   POST /api/assistant?action=upload  { name, type, data (base64) }  → { fileId, kind, name, sig }
+//        A photo or PDF for the next question. Stored with Anthropic's Files API (expires after 7 days); the
+//        browser gets the file id plus a signature and sends both back — file ids without a valid signature
+//        for this user are refused, so nobody can reference someone else's file.
 //
 // The browser keeps the conversation (including Claude's thinking blocks, unchanged) and sends it back each turn;
 // the system prompt and tools never change, so history stays valid and the prompt cache stays warm.
 // Spending: each request's token usage is priced and added to a monthly total ("aiusage" record); requests stop
 // once the month's cap is reached. Settings live in the "aisetting" record.
 
-import Anthropic from "@anthropic-ai/sdk";
+import Anthropic, { toFile } from "@anthropic-ai/sdk";
 import * as db from "../lib/db.js";
 import * as auth from "../lib/auth.js";
 import { TOOLS, callTool } from "./mcp.js";
@@ -31,7 +35,7 @@ How to work:
 - Use the tools to look things up instead of guessing. If the project is unclear, call list_projects (or ask).
 - You may create RFIs, respond to RFIs, create punch items and add daily log notes when the user asks you to. If key details are missing (which project, who should answer an RFI), ask one short question first. Never invent people — use list_people for names.
 - After creating or changing something, say exactly what you did and include the link the tool returned.
-- Photos can't be attached from this chat; when an RFI needs photos, give the user its "Add photos" link.
+- The user can attach photos and PDFs to a message, and you can see them. When you create an RFI right after the user sent files, tell them the app shows a button under your answer to attach those files to the RFI. Otherwise, when an RFI needs photos, give the user its "Add photos" link.
 - Keep answers short and practical, in plain language for people on a jobsite. Use short lists when listing items.
 - Each user message ends with a bracketed context line (who is asking, today's date, the project on screen). Use it, but don't repeat it back.
 - You only see what the signed-in user is allowed to see; if a tool says permission is denied, explain that plainly.`;
@@ -54,6 +58,21 @@ async function usage() {
   return u ? u.data : { month: month(), costUsd: 0, requests: 0, byUser: {} };
 }
 const allowed = (ctx, st) => ctx.isAdmin || st.access === "everyone";
+const FILE_TYPES = { "image/jpeg": "image", "image/png": "image", "image/gif": "image", "image/webp": "image", "application/pdf": "document" };
+const MAX_FILE = 3 * 1024 * 1024;     // keeps the upload request under the hosting limit (~4.5 MB with base64)
+const fileSig = (ctx, id) => auth.tag(ctx.user.id + ":" + id);
+// Every file referenced in the conversation must carry this user's signature
+function checkFiles(ctx, messages, sigs) {
+  for (const m of messages) {
+    if (m.role !== "user" || !Array.isArray(m.content)) continue;
+    for (const c of m.content) {
+      const src = c && c.source;
+      if (!src) continue;
+      if (src.type !== "file" || !["image", "document"].includes(c.type)) throw auth.httpError(400, "Bad attachment in the conversation");
+      if (typeof src.file_id !== "string" || !sigs || sigs[src.file_id] !== fileSig(ctx, src.file_id)) throw auth.httpError(403, "An attachment in this chat isn't yours — start a new chat");
+    }
+  }
+}
 
 function body(req) {
   if (req.body && typeof req.body === "object") return req.body;
@@ -86,11 +105,31 @@ export default async function handler(req, res) {
 
     auth.ensure(allowed(ctx, st), "The assistant is only available to company admins right now");
     if (!process.env.ANTHROPIC_API_KEY) throw auth.httpError(503, "The assistant isn't set up yet: ANTHROPIC_API_KEY is missing on the server.", "NOT_CONFIGURED");
+
+    if (req.query && req.query.action === "upload") {
+      const type = String(b.type || ""), kind = FILE_TYPES[type];
+      if (!kind) throw auth.httpError(400, "Only photos (JPG, PNG, GIF, WebP) and PDFs can be sent to the assistant");
+      const buf = Buffer.from(String(b.data || ""), "base64");
+      if (!buf.length) throw auth.httpError(400, "The file is empty");
+      if (buf.length > MAX_FILE) throw auth.httpError(413, "That file is too big for the assistant (3 MB max). Try a smaller PDF or a photo.");
+      const name = String(b.name || "file").replace(/[<>:"|?*\\/\x00-\x1f]/g, "_").slice(0, 120) || "file";
+      const up = await new Anthropic().files.upload({ file: await toFile(buf, name, { type }), expires_in_seconds: 7 * 24 * 3600 });
+      return res.status(200).json({ ok: true, fileId: up.id, kind, name, sig: fileSig(ctx, up.id) });
+    }
+
     const text = String(b.text || "").trim().slice(0, 4000);
-    if (!text) throw auth.httpError(400, "Type a question");
+    const files = (Array.isArray(b.files) ? b.files : []).slice(0, 10);
+    if (!text && !files.length) throw auth.httpError(400, "Type a question");
     const history = Array.isArray(b.messages) ? b.messages : [];
     if (JSON.stringify(history).length > 800000) throw auth.httpError(413, "This conversation is too long — start a new chat");
     if (history.some(m => !m || !["user", "assistant"].includes(m.role))) throw auth.httpError(400, "Bad conversation history");
+    const sigs = b.fileSigs && typeof b.fileSigs === "object" ? b.fileSigs : {};
+    const fileBlocks = files.map(f => {
+      const kind = f && f.kind === "document" ? "document" : "image";
+      return kind === "document" ? { type: "document", source: { type: "file", file_id: String(f.fileId || "") }, title: String(f.name || "").slice(0, 120) || undefined }
+        : { type: "image", source: { type: "file", file_id: String(f.fileId || "") } };
+    });
+    checkFiles(ctx, [...history, { role: "user", content: fileBlocks }], sigs);
 
     const used = await usage();
     if (used.costUsd >= st.capUsd) throw auth.httpError(402, `This month's assistant limit ($${st.capUsd}) has been reached. A company admin can raise it in the assistant settings.`, "CAP_REACHED");
@@ -101,7 +140,8 @@ export default async function handler(req, res) {
       const p = await db.get(b.projectId);
       if (p && p.type === "project") where = `; project on screen: "${p.data.name}"`;
     }
-    const messages = [...history, { role: "user", content: `${text}\n\n[Context: asked by ${ctx.user.data.name}${ctx.isAdmin ? " (company admin)" : ""}; today is ${new Date().toISOString().slice(0, 10)}${where}]` }];
+    const ask = `${text || "(see the attached files)"}${files.length ? `\n\n[Attached: ${files.map(f => String(f.name || "file").slice(0, 120)).join(", ")}]` : ""}\n\n[Context: asked by ${ctx.user.data.name}${ctx.isAdmin ? " (company admin)" : ""}; today is ${new Date().toISOString().slice(0, 10)}${where}]`;
+    const messages = [...history, { role: "user", content: fileBlocks.length ? [...fileBlocks, { type: "text", text: ask }] : ask }];
 
     const client = new Anthropic();
     let cost = 0, reply = "", stopped = "";
@@ -133,7 +173,10 @@ export default async function handler(req, res) {
         try {
           const out = await callTool(ctx, req, call.name, call.input);
           results.push({ type: "tool_result", tool_use_id: call.id, content: out });
-          if (/^(create_|respond_|add_)/.test(call.name)) actions.push({ tool: call.name, text: out.split("\n")[0] });
+          if (/^(create_|respond_|add_)/.test(call.name)) {
+            const link = /\/pm#\/p\/([A-Za-z0-9_-]+)\/(rfis|punch)\/([A-Za-z0-9_-]+)/.exec(out) || [];
+            actions.push({ tool: call.name, text: out.split("\n")[0], projectId: link[1] || "", recordId: link[3] || "" });
+          }
         } catch (e) {
           results.push({ type: "tool_result", tool_use_id: call.id, content: e.userFacing ? e.message : "Error: " + e.message, is_error: true });
         }

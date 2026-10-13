@@ -918,6 +918,7 @@
           <select id="dvRev" aria-label="Revision">${revs.slice().reverse().map(r => `<option value="${r.id}" ${r.id === rev.id ? "selected" : ""}>Rev ${esc(r.rev)}${r.id === g.data.current ? " (current)" : ""} — ${esc(r.setName || "")}</option>`).join("")}</select>
           <button class="btn small dv-scale" id="dvScale" title="Drawing scale used for measurements">Scale: not set</button>
           <button class="btn small" id="dvSideBtn">Details</button>
+          ${rfi ? "" : `<button class="btn small" id="dvPublish" data-perm="drawings:standard" title="Make your markups visible to everyone">Publish</button>`}
         </div>
         ${rfi && rfi.type === "rfi" ? `<div class="dv-rfi-banner"><span>✎ Marking up for <strong>RFI #${esc(rfi.data.number)}: ${esc(rfi.data.subject || "")}</strong> — these markups are saved only on the RFI, not on the main drawing.</span>
           <span class="spacer"></span>
@@ -941,8 +942,6 @@
           <span id="dvZoomLbl" class="zoom-lbl">100%</span>
           <button class="tool" id="dvZoomIn" title="Zoom in (+)" aria-label="Zoom in">+</button>
           <button class="tool" id="dvFit" title="Fit to screen (0)" aria-label="Fit">⤢</button>
-          <span class="spacer"></span>
-          ${rfi ? "" : `<button class="btn small" id="dvPublish" data-perm="drawings:standard" title="Make your markups visible to everyone">Publish</button>`}
         </div>
         <div class="dv-body">
           <div class="dv-wrap" id="dvWrap">

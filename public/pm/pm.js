@@ -190,7 +190,7 @@
     });
   }
   // Route segment → permission tool
-  const ROUTE_TOOL = { rfis: "rfis", submittals: "submittals", dailylog: "dailylog", punch: "punch", drawings: "drawings", specs: "specs", photos: "photos", team: "directory" };
+  const ROUTE_TOOL = { rfis: "rfis", submittals: "submittals", dailylog: "dailylog", punch: "punch", drawings: "drawings", specs: "specs", photos: "photos", inspections: "inspections", team: "directory" };
 
   function contactName(id) { const c = Store.get(id); return c ? c.data.name : ""; }
   function companyName(id) { const c = Store.get(id); return c ? c.data.name : ""; }
@@ -373,6 +373,7 @@
     ["dailylog", "Daily Log", "dailylog", null],
     ["drawings", "Drawings", "drawings", null],
     ["photos", "Photos", "photos", "photos?upload=1"],
+    ["inspections", "Inspections", "inspections", "inspections?new=1"],
     ["specs", "Specifications", "specs", null]
   ];
 
@@ -409,7 +410,8 @@
       const adminLinks = isCompanyAdmin() && Store.mode !== "local" ? `
         <div class="grp">Admin</div>
         <a href="#/admin/users" class="${location.hash.startsWith("#/admin/users") ? "on" : ""}">Users</a>
-        <a href="#/admin/templates" class="${location.hash.startsWith("#/admin/templates") ? "on" : ""}">Permission Templates</a>` : "";
+        <a href="#/admin/templates" class="${location.hash.startsWith("#/admin/templates") ? "on" : ""}">Permission Templates</a>
+        <a href="#/admin/company" class="${location.hash.startsWith("#/admin/company") ? "on" : ""}">Company Letterhead</a>` : "";
       sb.innerHTML = `
         <div class="grp">Company</div>
         <a href="#/" class="${current.nav === "portfolio" ? "on" : ""}">Portfolio</a>
@@ -428,6 +430,7 @@
       ["dailylog", "Daily Log", ""],
       ["punch", "Punch List", open("punch", ["Open", "Ready for Review", "Work Not Accepted"])],
       ["photos", "Photos", Store.all("jphoto", p.id).length || ""],
+      ["inspections", "Inspections", Store.all("inspection", p.id).filter(r => r.data.status === "Scheduled").length || ""],
       ["specs", "Specifications", Store.all("spec", p.id).length || ""],
       ["team", "Project Directory", ((p.data.team || []).length) || ""],
       ...(isCompanyAdmin() && Store.mode !== "local" ? [["permissions", "Permissions", ""]] : [])
@@ -464,7 +467,7 @@
           current.tool = parts[2] || "home";
           // Load only what this user may see
           const LOADS = [["rfi", "rfis"], ["submittal", "submittals"], ["dailylog", "dailylog"], ["punch", "punch"],
-            ["drawing", "drawings"], ["markup", "drawings"], ["drawset", "drawings"], ["spec", "specs"], ["subpackage", "submittals"], ["jphoto", "photos"], ["logsetting", "dailylog"], ["lookup", null]];
+            ["drawing", "drawings"], ["markup", "drawings"], ["drawset", "drawings"], ["spec", "specs"], ["subpackage", "submittals"], ["jphoto", "photos"], ["logsetting", "dailylog"], ["inspection", "inspections"], ["lookup", null]];
           await Promise.all(LOADS.filter(([, tool]) => !tool || can(p.id, tool)).map(([t]) => Store.load(t, p.id)));
           const sub = parts[3];
           // A link to something created elsewhere (e.g. by Claude) since this page loaded: fetch it again
@@ -490,6 +493,7 @@
             },
             team: () => projectTeam(p),
             photos: () => PM.photos ? PM.photos.page(p, query) : `<div class="empty">Photos module failed to load.</div>`,
+            inspections: () => PM.inspections ? PM.inspections.page(p, query) : `<div class="empty">Inspections module failed to load.</div>`,
             drawings: () => PM.drawings ? (sub === "review" ? PM.drawings.review(p, parts[4]) : sub ? PM.drawings.viewer(p, sub, query) : PM.drawings.log(p)) : `<div class="empty">Drawings module failed to load.</div>`
           }[current.tool] || (() => `<div class="empty">Unknown tool.</div>`);
         }
@@ -502,6 +506,9 @@
       } else if (parts[0] === "manpower" && PM.people) {
         current.nav = "manpower";
         view = () => PM.people.page(parts[1], query);
+      } else if (parts[0] === "jobs" && PM.jobs) {
+        current.nav = "portfolio";
+        view = () => PM.jobs.page(parts[1]);
       } else if (parts[0] === "directory") {
         current.nav = "directory";
         view = () => directory(parts[1] || "companies");
@@ -637,6 +644,7 @@
     return `
       <div class="page-head"><h1>Portfolio</h1><span class="sub">${all.length} project${all.length === 1 ? "" : "s"}</span>
         <div class="actions"><button class="btn primary" data-perm="company:admin" data-act="newProject">+ Create Project</button></div></div>
+      ${PM.jobs ? `<div class="tabs"><a href="#/" class="on">Projects</a><a href="#/jobs">Job Tracker</a></div>` : ""}
       <div class="cards">
         <div class="card"><div class="num">${by("Active")}</div><div class="lbl">Active projects</div></div>
         <div class="card"><div class="num">${by("Bidding")}</div><div class="lbl">Bidding</div></div>
@@ -865,6 +873,8 @@
         </div>
         <div>
           ${PM.people ? PM.people.crewPanel(p, today(), { title: "Crew on site today" }) : ""}
+          ${PM.jobs ? PM.jobs.homePanel(p) : ""}
+          ${PM.inspections ? PM.inspections.homePanel(p) : ""}
           <div class="panel"><h2>Project Information</h2>
             <div class="info-grid" style="grid-template-columns:1fr">
               <div><div class="k">Address</div><div class="v">${esc([d.address, d.city, d.state].filter(Boolean).join(", ")) || "—"}</div></div>
@@ -1135,7 +1145,7 @@
     };
     return `
       <div class="page-head"><h1>Submittals</h1>
-        <div class="actions"><button class="btn" data-act="exportSubmittals" data-project="${p.id}">Export CSV</button><button class="btn primary" data-perm="submittals:standard" data-act="newSubmittal" data-project="${p.id}">+ Create Submittal</button></div></div>
+        <div class="actions"><button class="btn" id="subListExportBtn" data-act="subExportList" data-project="${p.id}" aria-haspopup="true">Export ▾</button><button class="btn primary" data-perm="submittals:standard" data-act="newSubmittal" data-project="${p.id}">+ Create Submittal</button></div></div>
       ${PM.forms.subTabs(p, "items")}
       <div class="panel flush">${toolbarHTML(key, SUB_STATUSES, (() => { const trades = [...new Set(PM.forms.packagesOf(p).map(k => k.data.trade).filter(Boolean))].sort(); const f = getFilter(key); return trades.length ? `<select name="trade" data-act="filter" data-key="${key}" aria-label="Trade"><option value="">All trades</option>${trades.map(t => `<option ${f.trade === t ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>` : ""; })())}
         <div class="table-wrap"><table class="list"><thead><tr><th>Spec Section</th><th>#</th><th>Title</th><th>Package</th><th>Type</th><th>Status</th><th>Ball In Court</th><th>Responsible</th><th>Due</th></tr></thead>
@@ -1174,7 +1184,7 @@
           ${d.status !== "Closed" && d.status !== "Draft" ? `<button class="btn" data-perm="submittals:standard" data-act="subStatus" data-id="${s.id}" data-status="Closed">Close</button>` : ""}
           ${d.status === "Closed" ? `<button class="btn" data-perm="submittals:standard" data-act="subStatus" data-id="${s.id}" data-status="Open">Reopen</button>` : ""}
           <button class="btn" data-perm="submittals:standard" data-act="editSubmittal" data-id="${s.id}">Edit</button>
-          <button class="btn" onclick="window.print()">Print / PDF</button>
+          <button class="btn" id="subExportBtn" data-act="subExport" data-id="${s.id}" aria-haspopup="true">Export ▾</button>
           <button class="btn danger" data-perm="submittals:admin" data-act="deleteRecord" data-id="${s.id}" data-label="submittal" data-back="#/p/${p.id}/submittals">Delete</button>
         </div></div>
       <div class="panel"><div class="info-grid">${info.map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join("")}</div>

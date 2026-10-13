@@ -100,9 +100,10 @@
     .sort((a, b) => (a.data.name || "").localeCompare(b.data.name || ""));
 
   async function page(tab, query) {
-    const tabs = `<div class="tabs"><a href="#/manpower" class="${tab !== "certs" ? "on" : ""}">Deployment</a><a href="#/manpower/certs" class="${tab === "certs" ? "on" : ""}">Certifications</a></div>`;
+    const tabs = `<div class="tabs"><a href="#/manpower" class="${!tab ? "on" : ""}">Deployment</a><a href="#/manpower/chart" class="${tab === "chart" ? "on" : ""}">Manpower Chart</a><a href="#/manpower/certs" class="${tab === "certs" ? "on" : ""}">Certifications</a></div>`;
     if (tab === "certs") return certsPage(tabs);
     if (!canManpower()) return `<div class="empty">You don't have access to manpower. Ask a company admin if you need it.</div>${tabs}`;
+    if (tab === "chart") return chart(tabs, query);
     return board(tabs, query);
   }
 
@@ -189,6 +190,124 @@
     });
     const copy = $("#mpCopyWeek");
     if (copy) copy.onclick = () => copyLastWeek(week);
+  }
+
+  // ───────────────────────── Manpower chart ─────────────────────────
+  // Like the office spreadsheet: jobs × (this week's days, next week's days, 2 later weeks, 4 months).
+  // Day cells = guys deployed (or a typed number that overrides it); later weeks/months = typed numbers.
+  // Click a day cell to see / change the individual guys. Typed numbers live in one "mpplan" record per job.
+  const MP_SET = "set_manpower";
+  let chartOpen = "";   // "projectId|day" of the expanded cell
+  const planId = pid => "mpp_" + pid;
+  const plan = pid => { const r = Store.get(planId(pid)); return { days: {}, weeks: {}, months: {}, ...(r ? r.data : {}) }; };
+  const monthKey = s => s.slice(0, 7);
+  const monthLabel = k => `${new Date(k + "-15T12:00:00").toLocaleDateString(undefined, { month: "short" }).toUpperCase()}<small>${k.slice(0, 4)}</small>`;
+  async function savePlan(pid, part, key, val) {
+    const cur = Store.get(planId(pid)), d = plan(pid);
+    const next = { ...d[part] };
+    if (val === "" || val == null || !Number.isFinite(Number(val))) delete next[key]; else next[key] = Math.max(0, Math.min(999, Math.round(Number(val))));
+    const rec = { id: planId(pid), type: "mpplan", projectId: pid, data: { ...(cur ? cur.data : {}), [part]: next, updatedBy: PM.meName(), updatedAt: new Date().toISOString() } };
+    try { await Store.save(rec); return true; } catch (e) { toast("Not saved: " + e.message, true); return false; }
+  }
+
+  async function chart(tabs, query) {
+    await Promise.all([Store.load("deploy"), Store.load("mpplan"), Store.load("setting")]);
+    const people = await loadPeople();
+    const todayS = iso(new Date());
+    const week = mondayOf(query.get("week") || todayS);
+    const dayCols = [0, 1, 2, 3, 4, 7, 8, 9, 10, 11].map(i => addDays(week, i));
+    const weekCols = [14, 21].map(i => addDays(week, i));
+    // the 4 months after the month of the last week column (like the office sheet: …, 18th, 25th, NOV, DEC, JAN, FEB)
+    const monthCols = [0, 1, 2, 3].map(i => { const d = parse(addDays(weekCols[1], 7)); d.setDate(1); d.setMonth(d.getMonth() + i); return monthKey(iso(d)); });
+    const projects = boardProjects();
+    const deps = Store.all("deploy");
+    const guys = (pid, s, e) => deps.filter(d => d.projectId === pid && overlaps(d, s, e));
+    const dayCount = (pid, day) => new Set(guys(pid, day, day).map(d => d.data.userId)).size;
+    const weekMax = (pid, mon) => Math.max(0, ...[0, 1, 2, 3, 4].map(i => dayCount(pid, addDays(mon, i))));
+    const setting = Store.get(MP_SET);
+    const headcount = setting && setting.data.headcount != null && setting.data.headcount !== "" ? Number(setting.data.headcount) : people.length;
+    // value shown per cell: typed number wins; days fall back to who's deployed
+    const val = (p, kind, key) => {
+      const pl = plan(p.id);
+      if (kind === "day") return pl.days[key] != null ? { n: pl.days[key], typed: true, actual: dayCount(p.id, key) } : { n: dayCount(p.id, key), typed: false };
+      if (kind === "week") return pl.weeks[key] != null ? { n: pl.weeks[key], typed: true } : { n: weekMax(p.id, key), typed: false, hint: true };
+      return pl.months[key] != null ? { n: pl.months[key], typed: true } : { n: 0, typed: false, hint: true };
+    };
+    const cols = [...dayCols.map(k => ["day", k]), ...weekCols.map(k => ["week", k]), ...monthCols.map(k => ["month", k])];
+    const totals = cols.map(([kind, key]) => projects.reduce((s, p) => s + (val(p, kind, key).n || 0), 0));
+    const open = chartOpen.split("|");
+
+    setTimeout(() => wireChart(people, projects), 0);
+    const head = (kind, key) => kind === "day" ? `${parse(key).toLocaleDateString(undefined, { weekday: "short" }).toUpperCase()}<small>${parse(key).getMonth() + 1}/${parse(key).getDate()}</small>`
+      : kind === "week" ? `WEEK<small>${parse(key).getMonth() + 1}/${parse(key).getDate()}</small>` : monthLabel(key);
+    const cellHTML = (p, kind, key, edit) => {
+      const v = val(p, kind, key);
+      const cls = `mc-${kind} ${key === todayS ? "today" : ""} ${kind === "day" && key === dayCols[4] ? "wk-end" : ""}`;
+      if (kind === "day") return `<td class="${cls} mc-click ${open[0] === p.id && open[1] === key ? "open" : ""} ${v.typed ? "typed" : ""}" data-mc="${p.id}|${key}" title="${v.typed ? `Typed number (deployed: ${v.actual})` : "Guys deployed"} — click to see who">${v.n || ""}</td>`;
+      if (!edit) return `<td class="${cls}">${v.typed ? v.n : v.n ? `<span class="muted">${v.n}</span>` : ""}</td>`;
+      return `<td class="${cls}"><input class="mc-in" type="number" min="0" max="999" inputmode="numeric" data-plan="${p.id}|${kind === "week" ? "weeks" : "months"}|${key}" value="${v.typed ? v.n : ""}" placeholder="${v.hint && v.n ? v.n : ""}" aria-label="${esc(p.data.name)} ${kind} ${key}"></td>`;
+    };
+    const expandRow = p => {
+      if (open[0] !== p.id) return "";
+      const day = open[1], here = guys(p.id, day, day), edit = PM.can(p.id, "manpower", "standard"), pl = plan(p.id);
+      return `<tr class="mc-expand"><td colspan="${cols.length + 1}"><div class="mc-x">
+        <div class="mc-x-head"><strong>${esc(p.data.name)} · ${esc(parse(day).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" }))}</strong>
+          <span class="muted">${here.length} deployed</span><span class="spacer"></span><button class="btn small" data-mc-close>Close</button></div>
+        <div class="mc-guys">${here.map(d => { const u = personById(people, d.data.userId); return `<div class="mc-guy">${avatar(u, 28)}<div><strong>${esc(u.name)}</strong><div class="muted">${esc(u.trade || "")}${d.data.note ? " · " + esc(d.data.note) : ""}</div></div>
+          ${edit ? `<button class="btn small" data-mc-rm="${d.id}" data-day="${day}" title="Remove for this day">✕</button>` : ""}</div>`; }).join("") || `<p class="muted" style="margin:0">Nobody deployed here this day.</p>`}</div>
+        ${edit ? `<div class="mc-x-foot"><button class="btn small primary" data-mc-add="${p.id}" data-day="${day}">+ Add a guy</button>
+          <label>Count for the chart <input class="mc-in" type="number" min="0" max="999" data-plan="${p.id}|days|${day}" value="${pl.days[day] != null ? pl.days[day] : ""}" placeholder="${here.length}" style="width:70px"></label>
+          <span class="muted" style="font-size:12px">Leave empty to use the number deployed. Type a number when the guys aren't in the app yet.</span></div>` : ""}
+      </div></td></tr>`;
+    };
+    return `
+      <div class="page-head"><h1>Manpower</h1>
+        <div class="actions">
+          <a class="btn" href="#/manpower/chart?week=${addDays(week, -7)}">‹ Prev week</a>
+          <a class="btn" href="#/manpower/chart?week=${mondayOf(todayS)}">This week</a>
+          <a class="btn" href="#/manpower/chart?week=${addDays(week, 7)}">Next week ›</a>
+        </div></div>
+      ${tabs}
+      <p class="muted" style="margin-top:0">Each box is the number of guys on that job. Days count who is deployed — click a day to see the guys and add or remove them. Type numbers for the later weeks and months.</p>
+      <div class="panel flush"><div class="table-wrap"><table class="mc-table">
+        <thead><tr><th class="mc-job">Job</th>${cols.map(([kind, key]) => `<th class="mc-${kind} ${key === todayS ? "today" : ""} ${kind === "day" && key === dayCols[4] ? "wk-end" : ""}">${head(kind, key)}</th>`).join("")}</tr></thead>
+        <tbody>${projects.map(p => { const edit = PM.can(p.id, "manpower", "standard");
+          return `<tr><th class="mc-job"><a href="#/p/${p.id}">${esc(p.data.name)}</a>${p.data.number ? ` <span class="muted">${esc(p.data.number)}</span>` : ""}</th>${cols.map(([kind, key]) => cellHTML(p, kind, key, edit)).join("")}</tr>${expandRow(p)}`; }).join("")
+          || `<tr><td colspan="${cols.length + 1}" class="empty">No active jobs you can see.</td></tr>`}</tbody>
+        <tfoot>
+          <tr class="mc-total"><th class="mc-job">Total</th>${totals.map((t, i) => `<td class="mc-${cols[i][0]} ${cols[i][1] === todayS ? "today" : ""}">${t}</td>`).join("")}</tr>
+          <tr class="mc-diff"><th class="mc-job">Missing (−) / extra (+)<div class="muted" style="font-weight:400">Headcount ${headcount} ${PM.isCompanyAdmin() ? `<a href="#" id="mcHeadcount">change</a>` : ""}</div></th>
+            ${totals.map((t, i) => { const d = t - headcount; return `<td class="mc-${cols[i][0]} ${d < 0 ? "neg" : d > 0 ? "pos" : ""}">${d > 0 ? "+" + d : d}</td>`; }).join("")}</tr>
+        </tfoot></table></div></div>
+      <p class="muted" style="font-size:13px">Numbers in grey are suggestions from who is deployed (later weeks) — type over them to set the plan. A dot in a day box means the number was typed in instead of counted.</p>`;
+  }
+
+  function wireChart(people, projects) {
+    $$("[data-mc]").forEach(td => td.onclick = () => { chartOpen = chartOpen === td.dataset.mc ? "" : td.dataset.mc; PM.render(); });
+    $$("[data-mc-close]").forEach(b => b.onclick = () => { chartOpen = ""; PM.render(); });
+    $$("[data-mc-add]").forEach(b => b.onclick = () => assignModal(people, "", b.dataset.mcAdd, b.dataset.day));
+    $$("[data-mc-rm]").forEach(b => b.onclick = () => removeDays(Store.get(b.dataset.mcRm), b.dataset.day, b.dataset.day, people));
+    $$("[data-plan]").forEach(inp => inp.onchange = async () => {
+      const [pid, part, key] = inp.dataset.plan.split("|");
+      inp.disabled = true;
+      if (await savePlan(pid, part, key, inp.value.trim())) { toast("Saved"); PM.render(); } else inp.disabled = false;
+    });
+    const hc = $("#mcHeadcount");
+    if (hc) hc.onclick = e => {
+      e.preventDefault();
+      const cur = Store.get(MP_SET);
+      PM.openModal({
+        title: "Company headcount",
+        body: `<div class="field"><label for="hcN">Number of guys on the payroll</label><input id="hcN" type="number" min="0" value="${esc(cur && cur.data.headcount != null ? cur.data.headcount : "")}" placeholder="${people.length}">
+          <div class="muted help">Used for the Missing / extra row. Leave empty to use the number of people in the app (${people.length}).</div></div>`,
+        onSave: async root => {
+          const v = $("#hcN", root).value.trim();
+          try { await Store.save({ id: MP_SET, type: "setting", projectId: "", data: { ...(cur ? cur.data : {}), headcount: v === "" ? null : Math.max(0, Number(v)), updatedBy: PM.meName(), updatedAt: new Date().toISOString() } }); }
+          catch (err) { toast(err.message, true); return false; }
+          return true;
+        }
+      });
+    };
   }
 
   function weekEnd(day) { const d = parse(day); const toFri = (5 - d.getDay() + 7) % 7; return addDays(day, d.getDay() === 6 || d.getDay() === 0 ? 0 : toFri); }

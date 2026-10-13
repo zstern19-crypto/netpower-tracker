@@ -384,6 +384,7 @@
   // ───────────────────────── Routing ─────────────────────────
   function adminPage(page, sub) {
     if (page === "templates") return templatesPage(sub);
+    if (page === "company") return PM.exporter.letterheadPage();
     return usersPage();
   }
 

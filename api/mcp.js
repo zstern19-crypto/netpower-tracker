@@ -24,7 +24,7 @@ export const TOOLS = [
   { name: "list_people", description: "List the people on a project's team — use their names for RFI assignees or punch item assignees.", inputSchema: { type: "object", properties: { project: projectArg }, required: ["project"] } },
   { name: "list_rfis", description: "List RFIs on a project, newest first.", inputSchema: { type: "object", properties: { project: projectArg, status: { type: "string", enum: ["Draft", "Open", "Closed"], description: "Only this status" } }, required: ["project"] } },
   { name: "get_rfi", description: "Get one RFI with its question and responses.", inputSchema: { type: "object", properties: { project: projectArg, number: { type: "integer" } }, required: ["project", "number"] } },
-  { name: "create_rfi", description: "Create an RFI (Request for Information) on a project. It opens immediately when it has at least one assignee, otherwise it is saved as a Draft. You (the connected user) are the RFI manager.",
+  { name: "create_rfi", description: "Create an RFI (Request for Information) on a project. It opens immediately when it has at least one assignee, otherwise it is saved as a Draft. You (the connected user) are the RFI manager. The result contains an 'Add photos' link: always show that link to the user in your reply (photos from the chat can't be passed through this tool).",
     inputSchema: { type: "object", properties: {
       project: projectArg, subject: { type: "string", description: "Short title" }, question: { type: "string", description: "The full question" },
       assignees: { type: "array", items: { type: "string" }, description: "Names of the people who must answer (from list_people)" },
@@ -123,7 +123,7 @@ export async function callTool(ctx, req, name, a) {
         ...(open ? { openedAt: now() } : {}), createdById: ctx.contactId, createdByUserId: ctx.user.id, source: "Claude",
         history: [history(ctx, open ? "RFI created and opened (via Claude)" : "RFI created as draft (via Claude)")], updatedAt: now() } };
       await save(ctx, rec);
-      return `Created RFI #${number} "${rec.data.subject}" on ${p.data.name} as ${rec.data.status}${open ? "" : assignees.length ? "" : " (no assignees yet — add them in the app or call again with assignees)"}. Due ${due}.\nOpen in app: ${appUrl(req, p, "rfis/" + rec.id)}\nAdd photos (tap on your phone to take or pick pictures): ${appUrl(req, p, "rfis/" + rec.id + "?addPhotos=1")}`;
+      return `Created RFI #${number} "${rec.data.subject}" on ${p.data.name} as ${rec.data.status}${open ? "" : assignees.length ? "" : " (no assignees yet — add them in the app or call again with assignees)"}. Due ${due}.\n\nADD PHOTOS LINK (show this to the user — photos in this chat can't be sent through the connector; they tap it on their phone to take or pick pictures):\n${appUrl(req, p, "rfis/" + rec.id + "?addPhotos=1")}\n\nOpen in app: ${appUrl(req, p, "rfis/" + rec.id)}`;
     }
     case "get_rfi_photo_link": {
       const p = await findProject(ctx, a.project);
@@ -194,7 +194,7 @@ async function handleMessage(ctx, req, msg) {
     case "initialize": {
       const v = params && VERSIONS.includes(params.protocolVersion) ? params.protocolVersion : VERSIONS[0];
       return reply({ protocolVersion: v, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "netpower-pm", version: "1.0.0" },
-        instructions: `NetPower PM (construction project management). Connected as ${ctx.user.data.name}. Use list_projects first if the project is unclear. RFIs need a subject and question; add assignees (names from list_people) so the RFI opens right away. Photos from this chat can't be passed through the connector — after creating an RFI, give the user its "Add photos" link (also available from get_rfi_photo_link).` });
+        instructions: `NetPower PM (construction project management). Connected as ${ctx.user.data.name}. Use list_projects first if the project is unclear. RFIs need a subject and question; add assignees (names from list_people) so the RFI opens right away. Photos from this chat can't be passed through the connector — after creating an RFI, ALWAYS include its "Add photos" link in your reply, written out in full (also available from get_rfi_photo_link), even if the user didn't mention photos.` });
     }
     case "ping": return reply({});
     case "tools/list": return reply({ tools: TOOLS });

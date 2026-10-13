@@ -23,7 +23,7 @@ import * as auth from "../lib/auth.js";
 import { sharedRfi } from "./pm.js";
 
 const SIGNED_URL_TTL = 60 * 60 * 1000; // 1 hour
-const ATTACHMENT_TOOLS = ["rfis", "submittals", "punch", "dailylog", "specs", "photos"];
+const ATTACHMENT_TOOLS = ["rfis", "submittals", "punch", "dailylog", "specs", "photos", "inspections"];
 const CERT_RE = /^certs\/([A-Za-z0-9_-]{1,64})\/[A-Za-z0-9._-]{1,200}$/;
 const DRAWING_RE = /^drawings\/([A-Za-z0-9_-]{1,64})\/[A-Za-z0-9._-]{1,200}$/;
 const ATTACH_RE = /^attachments\/([A-Za-z0-9_-]{1,64})\/([a-z]+)\/[A-Za-z0-9._-]{1,200}$/;
