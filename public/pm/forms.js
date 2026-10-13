@@ -46,6 +46,51 @@
   const richHTML = (html, plain) => (html ? `<div class="rich">${sanitizeHTML(html)}</div>` : `<div class="prose">${esc(plain || "")}</div>`);
 
   const SIZES = [["1", "8pt"], ["2", "10pt"], ["3", "12pt"], ["4", "14pt"], ["5", "18pt"], ["6", "24pt"], ["7", "36pt"]];
+  // ── Voice to text: the browser's speech recognition (Chrome, Edge, Safari; not Firefox)
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let activeRec = null;
+  // Mic button for any textarea / input / rich-text area: data-mic="<element id>"
+  const micBtn = (targetId, cls = "mic-btn") => SR ? `<button type="button" class="${cls} mic" data-mic="${targetId}" title="Dictate — speak and it types for you" aria-label="Dictate" aria-pressed="false">🎤</button>` : "";
+  function insertDictated(el, text) {
+    if (!text) return;
+    if (el.isContentEditable) {
+      el.focus();
+      const sel = window.getSelection();
+      if (!sel.rangeCount || !el.contains(sel.anchorNode)) { const r = document.createRange(); r.selectNodeContents(el); r.collapse(false); sel.removeAllRanges(); sel.addRange(r); }
+      const before = sel.anchorNode && sel.anchorNode.textContent ? sel.anchorNode.textContent.slice(0, sel.anchorOffset) : "";
+      document.execCommand("insertText", false, (before && !/\s$/.test(before) ? " " : "") + text);
+    } else {
+      const start = el.selectionStart ?? el.value.length, end = el.selectionEnd ?? el.value.length;
+      const before = el.value.slice(0, start), add = (before && !/\s$/.test(before) ? " " : "") + text;
+      el.value = before + add + el.value.slice(end);
+      el.selectionStart = el.selectionEnd = start + add.length;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  }
+  function stopDictation() { if (activeRec) { const r = activeRec; activeRec = null; try { r.stop(); } catch (e) { /* already stopped */ } } }
+  document.addEventListener("click", e => {
+    const btn = e.target.closest && e.target.closest("[data-mic]");
+    if (!btn || !SR) return;
+    e.preventDefault();
+    const was = activeRec && activeRec._btn;
+    stopDictation();
+    if (was === btn) return;
+    const target = document.getElementById(btn.dataset.mic);
+    if (!target) return;
+    const rec = new SR();
+    rec.lang = navigator.language || "en-US";
+    rec.continuous = true;
+    rec.interimResults = false;
+    rec._btn = btn;
+    rec.onresult = ev => { for (let i = ev.resultIndex; i < ev.results.length; i++) if (ev.results[i].isFinal) insertDictated(target, ev.results[i][0].transcript.trim()); };
+    rec.onerror = ev => { if (ev.error !== "aborted" && ev.error !== "no-speech") PM.toast(ev.error === "not-allowed" ? "Microphone access is blocked — allow it from the icon in the browser's address bar" : "Voice input stopped (" + ev.error + ")", true); };
+    rec.onend = () => { btn.classList.remove("listening"); btn.setAttribute("aria-pressed", "false"); btn.title = "Dictate — speak and it types for you"; if (activeRec === rec) activeRec = null; };
+    btn.classList.add("listening"); btn.setAttribute("aria-pressed", "true"); btn.title = "Listening… click to stop";
+    activeRec = rec;
+    try { rec.start(); PM.toast("Listening… speak now. Click 🎤 again to stop."); } catch (err) { activeRec = null; btn.classList.remove("listening"); }
+  });
+  window.addEventListener("hashchange", stopDictation);
+
   function rteHTML(id, html, label) {
     const b = (cmd, title, icon, arg) => `<button type="button" class="rte-b" data-cmd="${cmd}" ${arg ? `data-arg="${arg}"` : ""} title="${title}" aria-label="${title}">${icon}</button>`;
     return `<div class="rte" data-rte="${id}">
@@ -57,6 +102,7 @@
         <label class="rte-color" title="Text color"><span>A</span><input type="color" data-color="foreColor" value="#c62828" aria-label="Text color"></label>
         <label class="rte-color" title="Highlight"><span class="hl">✎</span><input type="color" data-color="hiliteColor" value="#fff176" aria-label="Highlight color"></label>
         ${b("createLink", "Insert link", "🔗")}<span class="rte-sep"></span>${b("undo", "Undo", "↶")}${b("redo", "Redo", "↷")}
+        ${SR ? `<span class="rte-sep"></span>${micBtn(id, "rte-b")}` : ""}
       </div>
       <div class="rte-area" id="${id}" contenteditable="true" role="textbox" aria-multiline="true" aria-label="${esc(label)}">${sanitizeHTML(html)}</div>
     </div>`;
@@ -217,7 +263,7 @@
     return `
       ${section("Request", `<div class="fgrid-2">
         <div>
-          ${field("Subject", `<input name="subject" id="f_subject" value="${esc(d.subject || "")}">`, { req: true, key: "subject", for: "f_subject" })}
+          ${field("Subject", `<div class="with-mic"><input name="subject" id="f_subject" value="${esc(d.subject || "")}">${micBtn("f_subject")}</div>`, { req: true, key: "subject", for: "f_subject" })}
           ${field("Question", rteHTML("f_question", d.questionHtml || esc(d.question || "").replace(/\n/g, "<br>"), "Question"), { req: true, key: "question" })}
         </div>
         <div>${field("Attachments", attachHTML("rfi", d.attachments))}</div>
@@ -359,9 +405,9 @@
       <td class="nowrap"><button type="button" class="btn small" data-wf-up aria-label="Move up">↑</button> <button type="button" class="btn small" data-wf-rm aria-label="Remove step">✕</button></td></tr>`;
   }
 
-  function submittalFormHTML(p, s, revisionOf) {
+  function submittalFormHTML(p, s, revisionOf, defaults) {
     const src = revisionOf || s;
-    const d = src ? { ...src.data } : { number: PM.nextNumber("submittal", p.id), revision: 0, status: "Open", managerId: PM.me() || p.data.pmId || "", issueDate: PM.today() };
+    const d = src ? { ...src.data } : { ...(defaults || {}), number: PM.nextNumber("submittal", p.id), revision: 0, status: "Open", managerId: PM.me() || p.data.pmId || "", issueDate: PM.today() };
     if (revisionOf) {
       d.revision = Math.max(...Store.all("submittal", p.id).filter(x => Number(x.data.number) === Number(revisionOf.data.number)).map(x => Number(x.data.revision) || 0)) + 1;
       d.status = "Open"; d.issueDate = PM.today(); d.received = ""; d.attachments = [];
@@ -379,7 +425,7 @@
         ${field("Specification", `<select name="specId" id="f_specId"><option value="">Select a Specification</option>${specsOf(p).map(x => `<option value="${x.id}" ${x.id === d.specId ? "selected" : ""}>${esc(specLabel(x))}</option>`).join("")}</select>`, { for: "f_specId" })}
         ${field("Number & Revision", `<div class="numrev"><input name="number" type="number" min="1" value="${esc(d.number)}" aria-label="Number"><span>.</span><input name="revision" type="number" min="0" value="${esc(d.revision || 0)}" aria-label="Revision"></div>`, { req: true, key: "number" })}
         ${field("Submittal Type", `<select name="subType" id="f_subType"><option value="">Select a Type</option>${PM.SUB_TYPES.map(o => `<option ${d.subType === o ? "selected" : ""}>${o}</option>`).join("")}</select>`, { for: "f_subType" })}
-        ${field("Submittal Package", comboHTML("package", p, "package", d.package, "Select a Package"), { for: "f_package" })}
+        ${field("Submittal Package", packageSelectHTML(p, d.packageId, d.package), { for: "f_packageId" })}
         ${field("Responsible Contractor", vendorSelect("responsibleCompanyId", d.responsibleCompanyId), { for: "f_responsibleCompanyId" })}
         ${field("Received From", personSelect("receivedFromId", p, d.receivedFromId), { for: "f_receivedFromId" })}
         ${field("Submittal Manager", personSelect("managerId", p, d.managerId), { req: true, key: "managerId", for: "f_managerId" })}
@@ -419,7 +465,7 @@
       return contactId ? { ...(old || { response: "Pending", comments: "", at: "" }), contactId, due } : null;
     }).filter(Boolean);
     return {
-      title: v("title"), specId: v("specId"), number: num("number"), revision: num("revision") || 0, subType: v("subType"), package: v("package"),
+      title: v("title"), specId: v("specId"), number: num("number"), revision: num("revision") || 0, subType: v("subType"), packageId: v("packageId"), package: packageName(v("packageId")) || "",
       responsibleCompanyId: v("responsibleCompanyId"), receivedFromId: v("receivedFromId"), managerId: v("managerId"), status: v("status"),
       submitBy: v("submitBy"), received: v("received"), issueDate: v("issueDate"), costCode: v("costCode"), location: v("location"),
       linkedDrawings: readMulti(root, "linkedDrawings"), distribution: readMulti(root, "distribution"),
@@ -455,7 +501,7 @@
     }
     if (!(await PM.saveRec(rec, s ? "Submittal saved" : `Submittal #${rec.data.number}.${rec.data.revision} created`))) return null;
     await cleanupFiles(state, true);
-    rememberLookups(p, [["location", vals.location], ["package", vals.package], ["costcode", vals.costCode]]);
+    rememberLookups(p, [["location", vals.location], ["costcode", vals.costCode]]);
     return rec;
   }
 
@@ -469,6 +515,7 @@
       if (!root) return;
       wireAll(root, p, "submittals", state);
       wireWorkflow(root, p);
+      wirePackageSelect(root, p);
       $("[data-submit]", root).onclick = async ev => {
         ev.target.disabled = true;
         try { const rec = await saveSubmittal(p, s, root, state, revisionOf); if (rec) { state.done = true; location.hash = `#/p/${p.id}/submittals/${rec.id}`; } }
@@ -481,7 +528,7 @@
     return `<div id="formRoot" class="fpage">
       <div class="crumb"><a href="#/p/${p.id}/submittals">Submittals</a> / ${s ? "Edit" : "New"}</div>
       <h1>${title}</h1>
-      ${submittalFormHTML(p, s, revisionOf)}
+      ${submittalFormHTML(p, s, revisionOf, query && query.get("packageId") ? { packageId: query.get("packageId") } : null)}
       <div class="form-foot"><span class="req-note">* required fields</span><span class="spacer"></span>
         <button type="button" class="btn" data-cancel>Cancel</button>
         <button type="button" class="btn primary" data-submit>${s ? "Save" : "Create"}</button>
@@ -573,5 +620,127 @@
     });
   }
 
-  PM.forms = { rfiPage, rfiModal, submittalPage, specsPage, sanitizeHTML, richHTML, attachmentsView, specLabel };
+  // ───────────────────────── Submittal packages (one per trade / scope) ─────────────────────────
+  const packagesOf = p => Store.all("subpackage", p.id).sort((a, b) => String(a.data.trade || "").localeCompare(String(b.data.trade || "")) || String(a.data.number).localeCompare(String(b.data.number), undefined, { numeric: true }));
+  const packageLabel = k => (k ? `${k.data.number ? k.data.number + " - " : ""}${k.data.title}` : "");
+  const packageName = id => packageLabel(Store.get(id));
+  function packageSelectHTML(p, value, legacy) {
+    const list = packagesOf(p);
+    const byTrade = {};
+    list.forEach(k => { (byTrade[k.data.trade || "Other"] = byTrade[k.data.trade || "Other"] || []).push(k); });
+    return `<div class="with-mic"><select name="packageId" id="f_packageId"><option value="">${legacy && !value ? esc(legacy) + " (old)" : "Select a Package"}</option>
+      ${Object.entries(byTrade).map(([t, ks]) => `<optgroup label="${esc(t)}">${ks.map(k => `<option value="${k.id}" ${k.id === value ? "selected" : ""}>${esc(packageLabel(k))}</option>`).join("")}</optgroup>`).join("")}
+      </select>${PM.can(p.id, "submittals", "standard") ? `<button type="button" class="btn small" data-new-package title="Create a package">+ New</button>` : ""}</div>`;
+  }
+  function wirePackageSelect(root, p) {
+    const b = $("[data-new-package]", root);
+    if (b) b.onclick = () => editPackage(p, null, rec => {
+      const tmp = document.createElement("div");
+      tmp.innerHTML = packageSelectHTML(p, rec.id);
+      $("#f_packageId", root).replaceWith($("select", tmp));
+    });
+  }
+  function nextPackageNumber(p) {
+    const nums = packagesOf(p).map(k => parseInt(k.data.number, 10)).filter(n => !isNaN(n));
+    return String((nums.length ? Math.max(...nums) : 0) + 1);
+  }
+  function editPackage(p, k, after) {
+    const d = k ? k.data : { number: nextPackageNumber(p), trade: "Electrical" };
+    PM.openModal({
+      title: k ? "Edit Submittal Package" : "New Submittal Package",
+      noRender: true,
+      body: `<div class="fgrid-2">
+          ${field("Title", `<input name="title" id="pk_title" value="${esc(d.title || "")}" placeholder="e.g. Lighting Fixtures">`, { req: true, key: "title", for: "pk_title" })}
+          ${field("Package #", `<input name="number" id="pk_number" value="${esc(d.number || "")}">`, { for: "pk_number" })}
+          ${field("Trade", `<input name="trade" id="pk_trade" list="pk_trades" value="${esc(d.trade || "")}" placeholder="Select or type a trade"><datalist id="pk_trades">${PM.TRADES.map(t => `<option value="${esc(t)}">`).join("")}</datalist>`, { req: true, key: "trade", for: "pk_trade" })}
+          ${field("Spec Section", `<select name="specId" id="pk_spec"><option value="">—</option>${specsOf(p).map(x => `<option value="${x.id}" ${x.id === d.specId ? "selected" : ""}>${esc(specLabel(x))}</option>`).join("")}</select>`, { for: "pk_spec" })}
+        </div>
+        ${field("Description", `<textarea name="description" id="pk_desc">${esc(d.description || "")}</textarea>`, { for: "pk_desc" })}`,
+      onSave: async root => {
+        const v = n => $(`[name="${n}"]`, root).value.trim();
+        const vals = { title: v("title"), number: v("number"), trade: v("trade"), specId: v("specId"), description: v("description") };
+        const errs = {};
+        if (!vals.title) errs.title = "Required Field";
+        if (!vals.trade) errs.trade = "Required Field";
+        if (!showErrors(root, errs)) return false;
+        const rec = k ? PM.withHistory({ ...k, data: { ...k.data, ...vals } }, "Package edited")
+          : PM.withHistory({ id: uid("pkg"), type: "subpackage", projectId: p.id, data: { ...vals, createdBy: PM.meName(), createdAt: new Date().toISOString() } }, "Package created");
+        if (!(await PM.saveRec(rec, k ? "Package saved" : "Package created"))) return false;
+        if (after) setTimeout(() => after(rec), 0); else PM.render();
+        return true;
+      }
+    });
+  }
+  // Packages tab: grouped by trade
+  function packagesPage(p) {
+    const subs = Store.all("submittal", p.id);
+    const list = packagesOf(p);
+    const byTrade = {};
+    list.forEach(k => { (byTrade[k.data.trade || "Other"] = byTrade[k.data.trade || "Other"] || []).push(k); });
+    const loose = subs.filter(x => !x.data.packageId || !Store.get(x.data.packageId)).length;
+    setTimeout(() => { const b = $("#newPackage"); if (b) b.onclick = () => editPackage(p, null); }, 0);
+    return `
+      <div class="page-head"><h1>Submittals</h1>
+        <div class="actions"><button class="btn" id="newPackage" data-perm="submittals:standard">+ Create Package</button><button class="btn primary" data-perm="submittals:standard" data-act="newSubmittal" data-project="${p.id}">+ Create Submittal</button></div></div>
+      ${subTabs(p, "packages")}
+      ${list.length ? Object.entries(byTrade).map(([trade, ks]) => `<div class="panel flush"><div class="trade-head">${esc(trade)} <span class="muted">· ${ks.length} package${ks.length > 1 ? "s" : ""}</span></div>
+        <table class="list"><thead><tr><th>#</th><th>Package</th><th>Spec Section</th><th>Submittals</th><th>Open</th><th>Approved</th></tr></thead><tbody>
+        ${ks.map(k => { const items = subs.filter(x => x.data.packageId === k.id); const appr = items.filter(x => ["Approved", "Approved as Noted"].includes(x.data.status)).length; const open = items.filter(x => ["Open", "Draft", "Revise and Resubmit"].includes(x.data.status)).length;
+          return `<tr class="click" data-href="#/p/${p.id}/submittals/packages/${k.id}"><td>${esc(k.data.number || "")}</td><td><a href="#/p/${p.id}/submittals/packages/${k.id}">${esc(k.data.title)}</a></td><td>${esc(specLabel(Store.get(k.data.specId)))}</td><td>${items.length}</td><td>${open}</td><td>${appr}</td></tr>`; }).join("")}
+        </tbody></table></div>`).join("")
+        : `<div class="panel empty">No packages yet. Create one package per trade or scope (e.g. "Lighting Fixtures", "Fire Alarm Devices") and put its submittals inside.</div>`}
+      ${loose ? `<p class="muted">${loose} submittal${loose > 1 ? "s are" : " is"} not in a package — open them and pick a package, or use "Add submittals" on a package.</p>` : ""}`;
+  }
+  function packageDetail(p, id) {
+    const k = Store.get(id);
+    if (!k || k.type !== "subpackage") return `<div class="empty">Package not found. <a href="#/p/${p.id}/submittals/packages">Back to packages</a></div>`;
+    const items = Store.all("submittal", p.id).filter(x => x.data.packageId === k.id).sort((a, b) => a.data.number - b.data.number || a.data.revision - b.data.revision);
+    const loose = Store.all("submittal", p.id).filter(x => x.data.packageId !== k.id);
+    setTimeout(() => {
+      const e = $("#pkEdit"); if (e) e.onclick = () => editPackage(p, k);
+      const del = $("#pkDel"); if (del) del.onclick = async () => {
+        if (!window.confirm(`Delete package "${k.data.title}"? Its ${items.length} submittal(s) stay, just without a package.`)) return;
+        try {
+          if (items.length) await Store.saveMany(items.map(x => PM.withHistory({ ...x, data: { ...x.data, packageId: "", package: "" } }, "Removed from deleted package")));
+          await Store.remove(k.id);
+          location.hash = `#/p/${p.id}/submittals/packages`;
+        } catch (err) { PM.toast("Delete failed: " + err.message, true); }
+      };
+      const add = $("#pkAdd"); if (add) add.onclick = () => PM.openModal({
+        title: "Add Submittals to Package",
+        noRender: true,
+        saveLabel: "Add",
+        body: loose.length ? `<div class="checks">${loose.map(x => `<label><input type="checkbox" value="${x.id}"> #${esc(x.data.number)}.${esc(x.data.revision || 0)} ${esc(x.data.title || "")} <span class="muted">${x.data.packageId ? "(in " + esc(packageName(x.data.packageId)) + ")" : ""}</span></label>`).join("")}</div>` : `<p class="muted">All submittals are already in this package.</p>`,
+        onSave: async root => {
+          const ids = $$("input:checked", root).map(i => i.value);
+          if (!ids.length) return true;
+          try { await Store.saveMany(ids.map(i => Store.get(i)).map(x => PM.withHistory({ ...x, data: { ...x.data, packageId: k.id, package: packageLabel(k) } }, "Added to package " + packageLabel(k)))); }
+          catch (err) { PM.toast("Not saved: " + err.message, true); return false; }
+          PM.render();
+          return true;
+        }
+      });
+    }, 0);
+    return `
+      <div class="crumb"><a href="#/p/${p.id}/submittals">Submittals</a> / <a href="#/p/${p.id}/submittals/packages">Packages</a> / ${esc(k.data.number || "")}</div>
+      <div class="page-head"><h1>Package ${esc(packageLabel(k))}</h1>
+        <div class="actions">
+          <a class="btn primary" data-perm="submittals:standard" href="#/p/${p.id}/submittals/new?packageId=${k.id}">+ Create Submittal in Package</a>
+          <button class="btn" id="pkAdd" data-perm="submittals:standard">Add submittals</button>
+          <button class="btn" id="pkEdit" data-perm="submittals:standard">Edit</button>
+          <button class="btn danger" id="pkDel" data-perm="submittals:admin">Delete</button></div></div>
+      <div class="panel"><div class="info-grid">
+        <div><div class="k">Trade</div><div class="v">${esc(k.data.trade || "—")}</div></div>
+        <div><div class="k">Spec Section</div><div class="v">${esc(specLabel(Store.get(k.data.specId))) || "—"}</div></div>
+        <div><div class="k">Submittals</div><div class="v">${items.length}</div></div>
+        <div><div class="k">Created</div><div class="v">${PM.fmtDate(k.data.createdAt)} ${esc(k.data.createdBy || "")}</div></div></div>
+        ${k.data.description ? `<div class="prose" style="margin-top:10px">${esc(k.data.description)}</div>` : ""}</div>
+      <div class="panel flush"><table class="list"><thead><tr><th>#</th><th>Title</th><th>Type</th><th>Status</th><th>Ball In Court</th><th>Due</th></tr></thead><tbody>
+        ${items.map(x => `<tr class="click" data-href="#/p/${p.id}/submittals/${x.id}"><td><a href="#/p/${p.id}/submittals/${x.id}">#${esc(x.data.number)}.${esc(x.data.revision || 0)}</a></td><td>${esc(x.data.title)}</td><td>${esc(x.data.subType || "")}</td><td>${PM.pill(x.data.status)}</td><td>${esc(PM.bicNames(PM.submittalBIC(x)))}</td><td>${PM.fmtDate(x.data.due)}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">No submittals in this package yet.</td></tr>`}
+      </tbody></table></div>`;
+  }
+  const subTabs = (p, on) => `<div class="tabs sub-tabs"><a href="#/p/${p.id}/submittals" class="${on === "items" ? "on" : ""}">Items</a><a href="#/p/${p.id}/submittals/packages" class="${on === "packages" ? "on" : ""}">Packages</a></div>`;
+
+  PM.forms = { rfiPage, rfiModal, submittalPage, specsPage, sanitizeHTML, richHTML, attachmentsView, specLabel, micBtn,
+    packagesPage, packageDetail, packageName, packagesOf, subTabs, editPackage };
 })();

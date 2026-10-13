@@ -190,7 +190,7 @@
     });
   }
   // Route segment → permission tool
-  const ROUTE_TOOL = { rfis: "rfis", submittals: "submittals", dailylog: "dailylog", punch: "punch", drawings: "drawings", specs: "specs", team: "directory" };
+  const ROUTE_TOOL = { rfis: "rfis", submittals: "submittals", dailylog: "dailylog", punch: "punch", drawings: "drawings", specs: "specs", photos: "photos", team: "directory" };
 
   function contactName(id) { const c = Store.get(id); return c ? c.data.name : ""; }
   function companyName(id) { const c = Store.get(id); return c ? c.data.name : ""; }
@@ -359,6 +359,7 @@
     badge.hidden = Store.mode !== "local";
     badge.textContent = "Local demo mode";
     badge.title = "Airtable is not configured. Data is saved only in this browser.";
+    if (PM.people) PM.people.decorateTopbar();
     $$(".topnav a").forEach(a => a.classList.toggle("on", a.dataset.nav === current.nav));
   }
 
@@ -369,6 +370,7 @@
     ["punch", "Punch List", "punch", "punch?new=1"],
     ["dailylog", "Daily Log", "dailylog", null],
     ["drawings", "Drawings", "drawings", null],
+    ["photos", "Photos", "photos", "photos?upload=1"],
     ["specs", "Specifications", "specs", null]
   ];
 
@@ -382,7 +384,7 @@
     wrap.innerHTML = `<button class="pm-menu-btn" id="pmMenuBtn" aria-haspopup="true" aria-expanded="false">Project Management ▾</button>
       <div class="pm-menu" id="pmMenu" hidden role="menu">
         <div class="pm-menu-h">Project Management</div>
-        ${items.map(([route, label, tool, quick]) => `<div class="pm-menu-row"><a role="menuitem" href="#/p/${p.id}/${route}">${label}</a>${quick && can(p.id, tool, "standard") ? `<a class="pm-quick" href="#/p/${p.id}/${quick}" title="Create ${label === "Punch List" ? "punch item" : label.slice(0, -1)}" aria-label="Create ${label}">+</a>` : ""}</div>`).join("")}
+        ${items.map(([route, label, tool, quick]) => `<div class="pm-menu-row"><a role="menuitem" href="#/p/${p.id}/${route}">${label}</a>${quick && can(p.id, tool, "standard") ? `<a class="pm-quick" href="#/p/${p.id}/${quick}" title="${label === "Photos" ? "Upload photos" : "Create " + (label === "Punch List" ? "punch item" : label.slice(0, -1))}" aria-label="Create ${label}">+</a>` : ""}</div>`).join("")}
         <div class="pm-menu-sep"></div>
         <div class="pm-menu-row"><a href="#/p/${p.id}">Project Home</a></div>
         ${can(p.id, "directory") ? `<div class="pm-menu-row"><a href="#/p/${p.id}/team">Project Directory</a></div>` : ""}
@@ -423,6 +425,7 @@
       ["submittals", "Submittals", open("submittal", ["Open", "Revise and Resubmit"])],
       ["dailylog", "Daily Log", ""],
       ["punch", "Punch List", open("punch", ["Open", "Ready for Review", "Work Not Accepted"])],
+      ["photos", "Photos", Store.all("jphoto", p.id).length || ""],
       ["specs", "Specifications", Store.all("spec", p.id).length || ""],
       ["team", "Project Directory", ((p.data.team || []).length) || ""],
       ...(isCompanyAdmin() && Store.mode !== "local" ? [["permissions", "Permissions", ""]] : [])
@@ -459,7 +462,7 @@
           current.tool = parts[2] || "home";
           // Load only what this user may see
           const LOADS = [["rfi", "rfis"], ["submittal", "submittals"], ["dailylog", "dailylog"], ["punch", "punch"],
-            ["drawing", "drawings"], ["markup", "drawings"], ["drawset", "drawings"], ["spec", "specs"], ["lookup", null]];
+            ["drawing", "drawings"], ["markup", "drawings"], ["drawset", "drawings"], ["spec", "specs"], ["subpackage", "submittals"], ["jphoto", "photos"], ["logsetting", "dailylog"], ["lookup", null]];
           await Promise.all(LOADS.filter(([, tool]) => !tool || can(p.id, tool)).map(([t]) => Store.load(t, p.id)));
           const sub = parts[3];
           const F = PM.forms;
@@ -468,7 +471,7 @@
           view = noAccess ? () => `<div class="empty">You don't have access to this part of the project. Ask a company admin if you need it.</div>` : {
             home: () => projectHome(p),
             rfis: () => sub === "new" ? F.rfiPage(p, null) : parts[4] === "edit" ? F.rfiPage(p, Store.get(sub)) : sub ? rfiDetail(p, sub) : rfiList(p),
-            submittals: () => sub === "new" ? F.submittalPage(p, null, query) : parts[4] === "edit" ? F.submittalPage(p, Store.get(sub)) : sub ? submittalDetail(p, sub) : submittalList(p),
+            submittals: () => sub === "packages" ? (parts[4] ? F.packageDetail(p, parts[4]) : F.packagesPage(p)) : sub === "new" ? F.submittalPage(p, null, query) : parts[4] === "edit" ? F.submittalPage(p, Store.get(sub)) : sub ? submittalDetail(p, sub) : submittalList(p),
             specs: () => F.specsPage(p, sub),
             permissions: () => PM.auth.projectPermissions(p),
             dailylog: () => dailyLog(p, sub),
@@ -478,12 +481,16 @@
               return punchList(p);
             },
             team: () => projectTeam(p),
+            photos: () => PM.photos ? PM.photos.page(p, query) : `<div class="empty">Photos module failed to load.</div>`,
             drawings: () => PM.drawings ? (sub ? PM.drawings.viewer(p, sub, query) : PM.drawings.log(p)) : `<div class="empty">Drawings module failed to load.</div>`
           }[current.tool] || (() => `<div class="empty">Unknown tool.</div>`);
         }
       } else if (parts[0] === "admin" && PM.auth) {
         current.nav = "admin";
         view = () => (isCompanyAdmin() ? PM.auth.adminPage(parts[1] || "users", parts[2]) : `<div class="empty">Only company admins can open this page.</div>`);
+      } else if (parts[0] === "manpower" && PM.people) {
+        current.nav = "manpower";
+        view = () => PM.people.page(parts[1], query);
       } else if (parts[0] === "directory") {
         current.nav = "directory";
         view = () => directory(parts[1] || "companies");
@@ -845,6 +852,7 @@
           </div>
         </div>
         <div>
+          ${PM.people ? PM.people.crewPanel(p, today(), { title: "Crew on site today" }) : ""}
           <div class="panel"><h2>Project Information</h2>
             <div class="info-grid" style="grid-template-columns:1fr">
               <div><div class="k">Address</div><div class="v">${esc([d.address, d.city, d.state].filter(Boolean).join(", ")) || "—"}</div></div>
@@ -964,13 +972,14 @@
         ${(d.responses || []).map(x => `<div class="thread"><div class="meta"><strong>${esc(x.by)}</strong> · ${fmtDateTime(x.at)} ${x.official ? pill("Official") : ""}
           <button class="btn small no-print" data-perm="rfis:standard" data-act="rfiOfficial" data-id="${r.id}" data-resp="${x.id}">${x.official ? "Unmark official" : "Mark official"}</button></div><div class="prose">${esc(x.text)}</div></div>`).join("") || `<p class="muted">No responses yet.</p>`}
         ${d.status !== "Draft" ? `<div class="no-print" style="margin-top:14px" data-perm="rfis:standard">
-          <div class="field"><label for="respText">Add a response</label><textarea id="respText" placeholder="Type your response…"></textarea></div>
+          <div class="field"><label for="respText">Add a response</label><div class="with-mic top"><textarea id="respText" placeholder="Type or dictate your response…"></textarea>${PM.forms.micBtn("respText")}</div></div>
           <div style="display:flex;gap:16px;align-items:center;margin-top:8px;flex-wrap:wrap">
             <label class="inline-check"><input type="checkbox" id="respOfficial"> Official response</label>
             ${open ? `<label class="inline-check"><input type="checkbox" id="respClose"> Close RFI</label>` : `<input type="checkbox" id="respClose" hidden>`}
             <button class="btn primary" data-act="rfiRespond" data-id="${r.id}">Post Response</button></div></div>` : `<p class="muted no-print">Open the RFI to collect responses.</p>`}
       </div>
       ${drawingLinksPanel(p, r.id)}
+      ${PM.drawings && PM.drawings.rfiMarkupsPanel ? PM.drawings.rfiMarkupsPanel(p, r) : ""}
       ${historyPanel(d)}`;
   }
 
@@ -1036,17 +1045,22 @@
   function submittalList(p) {
     const key = "sub_" + p.id;
     LIST_RENDERERS[key] = () => {
+      const trade = getFilter(key).trade || "";
+      const pkgTrade = s => { const k = Store.get(s.data.packageId); return k ? k.data.trade || "" : ""; };
       const rows = Store.all("submittal", p.id)
-        .filter(s => matchFilter(key, s, ["#" + s.data.number, s.data.title, s.data.specSection, s.data.subType, bicNames(submittalBIC(s)), subResponsible(s.data)].join(" "), s.data.status !== "Closed", submittalBIC(s)))
+        .filter(s => !trade || pkgTrade(s) === trade)
+        .filter(s => matchFilter(key, s, ["#" + s.data.number, s.data.title, s.data.specSection, s.data.subType, bicNames(submittalBIC(s)), subResponsible(s.data), PM.forms.packageName(s.data.packageId) || s.data.package || ""].join(" "), s.data.status !== "Closed", submittalBIC(s)))
         .sort((a, b) => (a.data.specSection || "").localeCompare(b.data.specSection || "") || a.data.number - b.data.number || a.data.revision - b.data.revision);
-      if (!rows.length) return `<tr><td colspan="8" class="empty">No submittals found.</td></tr>`;
+      if (!rows.length) return `<tr><td colspan="9" class="empty">No submittals found.</td></tr>`;
       return rows.map(s => {
         const d = s.data;
         const open = !["Closed", "Approved", "Approved as Noted"].includes(d.status);
         return `<tr class="click" data-href="#/p/${p.id}/submittals/${s.id}">
           <td class="nowrap">${esc(d.specSection)}</td>
           <td class="nowrap"><a href="#/p/${p.id}/submittals/${s.id}">#${d.number}.${d.revision || 0}</a></td>
-          <td>${esc(d.title)}</td><td>${esc(d.subType)}</td><td>${pill(d.status)}</td>
+          <td>${esc(d.title)}</td>
+          <td>${d.packageId && Store.get(d.packageId) ? `<a href="#/p/${p.id}/submittals/packages/${d.packageId}">${esc(PM.forms.packageName(d.packageId))}</a>` : esc(d.package || "")}</td>
+          <td>${esc(d.subType)}</td><td>${pill(d.status)}</td>
           <td>${esc(bicNames(submittalBIC(s)))}</td>
           <td>${esc(subResponsible(d))}</td>
           <td class="nowrap ${isOverdue(d.due, open) ? "overdue" : ""}">${fmtDate(d.due)}</td></tr>`;
@@ -1055,8 +1069,9 @@
     return `
       <div class="page-head"><h1>Submittals</h1>
         <div class="actions"><button class="btn" data-act="exportSubmittals" data-project="${p.id}">Export CSV</button><button class="btn primary" data-perm="submittals:standard" data-act="newSubmittal" data-project="${p.id}">+ Create Submittal</button></div></div>
-      <div class="panel flush">${toolbarHTML(key, SUB_STATUSES)}
-        <div class="table-wrap"><table class="list"><thead><tr><th>Spec Section</th><th>#</th><th>Title</th><th>Type</th><th>Status</th><th>Ball In Court</th><th>Responsible</th><th>Due</th></tr></thead>
+      ${PM.forms.subTabs(p, "items")}
+      <div class="panel flush">${toolbarHTML(key, SUB_STATUSES, (() => { const trades = [...new Set(PM.forms.packagesOf(p).map(k => k.data.trade).filter(Boolean))].sort(); const f = getFilter(key); return trades.length ? `<select name="trade" data-act="filter" data-key="${key}" aria-label="Trade"><option value="">All trades</option>${trades.map(t => `<option ${f.trade === t ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>` : ""; })())}
+        <div class="table-wrap"><table class="list"><thead><tr><th>Spec Section</th><th>#</th><th>Title</th><th>Package</th><th>Type</th><th>Status</th><th>Ball In Court</th><th>Responsible</th><th>Due</th></tr></thead>
         <tbody id="listBody">${LIST_RENDERERS[key]()}</tbody></table></div></div>`;
   }
 
@@ -1074,7 +1089,7 @@
       ["Status", pill(d.status)], ["Ball In Court", esc(bicNames(submittalBIC(s))) || "—"], ["Final Due", `<span class="${isOverdue(d.due, open) ? "overdue" : ""}">${fmtDate(d.due) || "—"}</span>`],
       ["Spec Section", esc(d.specSection) || "—"], ["Type", esc(d.subType) || "—"], ["Location", esc(d.location) || "—"],
       ["Submittal Manager", esc(contactName(d.managerId)) || "—"], ["Responsible Contractor", esc(subResponsible(d)) || "—"], ["Received From", esc(contactLabel(d.receivedFromId)) || "—"],
-      ["Submittal Package", esc(d.package) || "—"], ["Cost Code", esc(d.costCode) || "—"], ["Issue Date", fmtDate(d.issueDate) || "—"],
+      ["Submittal Package", d.packageId && Store.get(d.packageId) ? `<a href="#/p/${p.id}/submittals/packages/${d.packageId}">${esc(PM.forms.packageName(d.packageId))}</a> <span class="muted">(${esc(Store.get(d.packageId).data.trade || "")})</span>` : esc(d.package) || "—"], ["Cost Code", esc(d.costCode) || "—"], ["Issue Date", fmtDate(d.issueDate) || "—"],
       ["Submit By", fmtDate(d.submitBy) || "—"], ["Received", fmtDate(d.received) || "—"], ["Required On Site", fmtDate(d.requiredOnSite) || "—"],
       ["Distribution List", esc((d.distribution || []).map(contactName).join(", ")) || "—"],
       ["Linked Drawings", (d.linkedDrawings || []).map(id => Store.get(id)).filter(Boolean).map(g => `<a href="#/p/${p.id}/drawings/${g.id}">${esc(g.data.number)}</a>`).join(", ") || "—"],
@@ -1186,12 +1201,25 @@
           </div>
         </div>
         <div class="no-print">
+          ${PM.people ? PM.people.dailyLogPanels(p, date, list => fillCrew(p, list)) : ""}
+          ${PM.photos ? PM.photos.dayPanel(p, date) : ""}
           <div class="panel"><h2>Logs</h2>
             ${logs.length ? `<table class="list"><thead><tr><th>Date</th><th>Workers</th><th></th></tr></thead><tbody>${logs.slice(0, 40).map(l => `<tr class="click" data-href="#/p/${p.id}/dailylog/${l.data.date}" ${l.data.date === date ? 'style="background:var(--accent-soft)"' : ""}>
               <td class="nowrap"><a href="#/p/${p.id}/dailylog/${l.data.date}">${fmtDate(l.data.date)}</a></td><td>${(l.data.manpower || []).reduce((s, m) => s + (Number(m.workers) || 0), 0)}</td><td>${l.data.locked ? pill("Approved") : ""}</td></tr>`).join("")}</tbody></table>` : `<p class="muted">No logs yet.</p>`}
           </div>
         </div>
       </div>`;
+  }
+
+  // Daily log → Manpower rows from the people deployed to this project that day (one row per company)
+  function fillCrew(p, list) {
+    const form = $("#logForm");
+    if (!form || $("#saveLog").disabled) return;
+    const byCo = {};
+    list.forEach(x => { const c = Store.get(x.person.contactId); const co = (c && c.data.companyId) || ""; (byCo[co] = byCo[co] || []).push(x.person.name); });
+    const sec = LOG_SECTIONS[0];
+    Object.entries(byCo).forEach(([co, names]) => $(`[data-sec="manpower"] tbody`, form).insertAdjacentHTML("beforeend", subRowHTML(sec, { companyId: co, workers: names.length, hours: 8, notes: names.join(", ") })));
+    toast(`Added ${list.length} crew member${list.length > 1 ? "s" : ""} — review hours and save`);
   }
 
   function collectLog() {

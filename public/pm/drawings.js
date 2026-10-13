@@ -660,10 +660,34 @@
       <span class="muted">Rev ${esc(l.rev ? l.rev.rev : "?")}${l.rev && l.rev.id !== l.g.data.current ? " (superseded)" : ""}</span></div>`).join("")}</div>`;
   }
 
+  // RFI page: markups kept on the RFI (not on the main drawings)
+  function rfiMarkupsPanel(p, r) {
+    const layers = (r.data.markups || []).filter(l => (l.shapes || []).length && Store.get(l.drawingId));
+    const sheets = sheetsOf(p);
+    const canDraw = PM.can(p.id, "drawings") && sheets.length;
+    if (!layers.length && !canDraw) return "";
+    setTimeout(() => {
+      const b = document.getElementById("rfiMarkupBtn");
+      if (b) b.onclick = () => PM.openModal({
+        title: "Mark Up a Drawing for this RFI",
+        noRender: true,
+        saveLabel: "Open sheet",
+        body: `<div class="field"><label for="rmSheet">Sheet</label><select id="rmSheet">${sheets.map(g => `<option value="${g.id}">${esc(g.data.number)} — ${esc(g.data.title || "")}</option>`).join("")}</select></div>
+          <p class="muted">Markups you draw there are saved only on RFI #${esc(r.data.number)}.</p>`,
+        onSave: root => { location.hash = `#/p/${p.id}/drawings/${$("#rmSheet", root).value}?rfi=${r.id}`; return true; }
+      });
+    }, 0);
+    return `<div class="panel no-print"><div class="panel-head"><h2>Drawing Markups</h2>${canDraw ? `<button class="btn small" id="rfiMarkupBtn" data-perm="rfis:standard">✎ Mark up a drawing</button>` : ""}</div>
+      ${layers.length ? layers.map(l => { const g = Store.get(l.drawingId); return `<div style="margin:4px 0">✎ <a href="#/p/${p.id}/drawings/${g.id}?rev=${l.revId}&rfi=${r.id}"><strong>${esc(g.data.number)}</strong> ${esc(g.data.title || "")}</a>
+        <span class="muted">Rev ${esc(l.rev ?? "?")} · ${l.shapes.length} markup${l.shapes.length > 1 ? "s" : ""}</span></div>`; }).join("")
+        : `<p class="muted">No drawing markups on this RFI yet. Markups made here stay on the RFI and don't clutter the main drawings.</p>`}</div>`;
+  }
+
   // ───────────────────────── Viewer ─────────────────────────
   // [key, icon, label, shortcut, how-to hint]
   const TOOLS = [
     ["pan", "➚", "Select", "V", "Scroll to zoom · drag to move the sheet · click a markup to select or move it · double-click text to edit"],
+    ["lasso", "➰", "Lasso", "Q", "Draw a loop around markups to select them all"],
     ["pen", "✎", "Pen", "P", "Drag to draw freehand"],
     ["highlight", "▬", "Highlight", "H", "Drag to highlight"],
     ["line", "╱", "Line", "L", "Drag to draw a line"],
@@ -671,8 +695,25 @@
     ["rect", "▭", "Box", "B", "Drag to draw a box"],
     ["cloud", "☁", "Cloud", "C", "Drag to draw a revision cloud"],
     ["text", "T", "Text", "T", "Click where the text should go"],
+    ["measure", "📏", "Measure", "M", "Drag from one point to another to measure the distance"],
+    ["area", "⬠", "Area", "G", "Click each corner; double-click or click the first point to finish"],
     ["link", "📍", "Pin", "N", "Click a spot to pin an RFI or punch item there"]
   ];
+  const CAL_HINT = "Drag a line along a dimension you know (e.g. a 10'-0\" grid spacing)";
+
+  // Drawing scales: paper inches per real foot (PDF units are 1/72 inch)
+  const ARCH_SCALES = [["1/16\" = 1'-0\"", 1 / 16], ["3/32\" = 1'-0\"", 3 / 32], ["1/8\" = 1'-0\"", 1 / 8], ["3/16\" = 1'-0\"", 3 / 16], ["1/4\" = 1'-0\"", 1 / 4],
+    ["3/8\" = 1'-0\"", 3 / 8], ["1/2\" = 1'-0\"", 1 / 2], ["3/4\" = 1'-0\"", 3 / 4], ["1\" = 1'-0\"", 1], ["1 1/2\" = 1'-0\"", 1.5], ["3\" = 1'-0\"", 3],
+    ["1\" = 10'", 1 / 10], ["1\" = 20'", 1 / 20], ["1\" = 30'", 1 / 30], ["1\" = 40'", 1 / 40], ["1\" = 50'", 1 / 50], ["1\" = 60'", 1 / 60], ["1\" = 100'", 1 / 100]];
+  // Feet → 12'-6 1/4"
+  function fmtFeet(ft) {
+    const neg = ft < 0; ft = Math.abs(ft);
+    let quarters = Math.round(ft * 48), f = Math.floor(quarters / 48);
+    quarters -= f * 48;
+    const inch = Math.floor(quarters / 4), q = quarters % 4;
+    const frac = ["", " 1/4", " 1/2", " 3/4"][q];
+    return (neg ? "-" : "") + `${f}'-${inch}${frac}"`;
+  }
   const COLORS = ["#e5322d", "#f26722", "#e6b800", "#1f9d55", "#1d63c9", "#7b3fbf", "#111111"];
   const WIDTHS = [["1.5", "Thin"], ["2.5", "Medium"], ["5", "Thick"], ["9", "Extra thick"]];
   const FONTS = {
@@ -707,9 +748,11 @@
     const idx = sheets.findIndex(x => x.id === g.id);
     const prev = sheets[idx - 1], next = sheets[idx + 1];
     const isCurrent = rev.id === g.data.current;
+    const rfi = query.get("rfi") ? Store.get(query.get("rfi")) : null;
+    const editPerm = rfi ? "rfis:standard" : "drawings:standard";
     const toolBtn = ([k, icon, label, key]) => `<button class="tool" data-tool="${k}" title="${label} (${key})" aria-label="${label}"><span class="ti">${icon}</span><span class="tl">${label}</span></button>`;
     document.body.classList.add("viewer-mode");
-    setTimeout(() => mountViewer(p, g, rev, query.get("pin")), 0);
+    setTimeout(() => mountViewer(p, g, rev, query.get("pin"), rfi && rfi.type === "rfi" ? rfi : null), 0);
     return `
       <div class="dv">
         <div class="dv-head">
@@ -720,17 +763,23 @@
             <span class="muted">· Rev ${esc(rev.rev)} · ${esc(rev.setName || "")}${rev.drawingDate ? " · " + PM.fmtDate(rev.drawingDate) : ""}</span>
             ${isCurrent ? "" : `<span class="pill revise-and-resubmit">Not current</span>`}</div>
           <select id="dvRev" aria-label="Revision">${revs.slice().reverse().map(r => `<option value="${r.id}" ${r.id === rev.id ? "selected" : ""}>Rev ${esc(r.rev)}${r.id === g.data.current ? " (current)" : ""} — ${esc(r.setName || "")}</option>`).join("")}</select>
+          <button class="btn small dv-scale" id="dvScale" title="Drawing scale used for measurements">Scale: not set</button>
           <button class="btn small" id="dvSideBtn">Details</button>
         </div>
+        ${rfi && rfi.type === "rfi" ? `<div class="dv-rfi-banner"><span>✎ Marking up for <strong>RFI #${esc(rfi.data.number)}: ${esc(rfi.data.subject || "")}</strong> — these markups are saved only on the RFI, not on the main drawing.</span>
+          <span class="spacer"></span>
+          <button class="btn small" id="dvCopyToSheet" data-perm="drawings:standard" title="Copy these markups onto the main drawing">Copy to main drawing</button>
+          <a class="btn small primary" href="#/p/${p.id}/rfis/${rfi.id}">Done — back to RFI</a></div>` : ""}
         <div class="dv-tools" role="toolbar" aria-label="Markup tools">
           ${toolBtn(TOOLS[0])}
-          <span class="dv-markup" data-perm="drawings:standard">
-          ${TOOLS.slice(1).map(toolBtn).join("")}
+          <span class="dv-markup" data-perm="${editPerm}">
+          ${TOOLS.slice(1).filter(t => !(rfi && t[0] === "link")).map(toolBtn).join("")}
           <span class="sep"></span>
           ${COLORS.map(c => `<button class="swatch" data-color="${c}" style="background:${c}" title="Color" aria-label="Color ${c}"></button>`).join("")}
           <select id="dvWidth" class="dv-width" title="Line thickness" aria-label="Line thickness">${WIDTHS.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select>
           <span class="sep"></span>
           <button class="tool" id="dvEditText" title="Edit text (or double-click it)" aria-label="Edit text" hidden><span class="ti">✎</span><span class="tl">Edit text</span></button>
+          ${rfi ? "" : `<button class="tool" id="dvToRfi" data-perm="rfis:standard" title="Move the selected markups onto an RFI" aria-label="Move to RFI" hidden><span class="ti">➜</span><span class="tl">Move to RFI</span></button>`}
           <button class="tool" id="dvUndo" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
           <button class="tool" id="dvDelete" title="Delete selected (Del)" aria-label="Delete selected">🗑</button>
           </span>
@@ -740,7 +789,7 @@
           <button class="tool" id="dvZoomIn" title="Zoom in (+)" aria-label="Zoom in">+</button>
           <button class="tool" id="dvFit" title="Fit to screen (0)" aria-label="Fit">⤢</button>
           <span class="spacer"></span>
-          <button class="btn small" id="dvPublish" data-perm="drawings:standard" title="Make your markups visible to everyone">Publish</button>
+          ${rfi ? "" : `<button class="btn small" id="dvPublish" data-perm="drawings:standard" title="Make your markups visible to everyone">Publish</button>`}
         </div>
         <div class="dv-body">
           <div class="dv-wrap" id="dvWrap">
@@ -759,31 +808,36 @@
       </div>`;
   }
 
-  async function mountViewer(p, g, rev, focusPinId) {
+  async function mountViewer(p, g, rev, focusPinId, rfi) {
     const wrap = $("#dvWrap");
     if (!wrap) return;
     const key = g.id + "|" + rev.id;
     const V = {
       p, g, rev, key, zoom: 1, W: 0, H: 0, mx: 0, my: 0, page: null, baseScale: 1,
       tool: "pan", color: PM.lsGet("netpower_pm_markup_color", COLORS[0]), width: Number(PM.lsGet("netpower_pm_markup_width", 2.5)) || 2.5,
-      mine: [], undo: [], selected: null, draft: null, pan: null, drag: null, space: false,
+      mine: [], undo: [], sel: new Set(), draft: null, pan: null, drag: null, space: false,
       showOthers: PM.lsGet("netpower_pm_show_others", true),
-      saveTimer: null, tileTimer: null, tileTask: null, dirty: false, destroyed: false
+      saveTimer: null, tileTimer: null, tileTask: null, dirty: false, destroyed: false,
+      rfi, lasso: null, poly: null
     };
     const stage = $("#dvStage"), page = $("#dvPage"), svg = $("#dvSvg"), base = $("#dvBase"), tile = $("#dvTile"), msg = $("#dvMsg"), pop = $("#dvPop"), hint = $("#dvHint");
     const canMarkup = () => !!document.querySelector('.dv-tools [data-tool="pen"]');
 
     const myRecord = () => PM.me() ? Store.all("markup", p.id).find(m => m.data.drawingId === g.id && m.data.revId === rev.id && m.data.ownerId === PM.me()) : null;
-    const others = () => Store.all("markup", p.id).filter(m => m.data.drawingId === g.id && m.data.revId === rev.id && m.data.ownerId !== PM.me());
-    V.mine = JSON.parse(JSON.stringify((myRecord() || { data: { shapes: [] } }).data.shapes || []));
+    // RFI mode: the editable layer is the RFI's markups for this sheet; other people's sheet markups are hidden
+    const others = () => V.rfi ? [] : Store.all("markup", p.id).filter(m => m.data.drawingId === g.id && m.data.revId === rev.id && m.data.ownerId !== PM.me());
+    const rfiLayer = r => ((r && r.data.markups) || []).find(m => m.drawingId === g.id && m.revId === rev.id);
+    const rfiEditable = () => PM.can ? PM.can(p.id, "rfis", "standard") : true;
+    V.mine = JSON.parse(JSON.stringify(V.rfi ? ((rfiLayer(V.rfi) || {}).shapes || []) : (myRecord() || { data: { shapes: [] } }).data.shapes || []));
 
     const typing = e => e.target.closest && e.target.closest("input, textarea, select, [contenteditable], .modal");
     const onKey = e => {
       if (typing(e)) return;
       const k = e.key;
       if (k === " ") { e.preventDefault(); if (!V.space) { V.space = true; syncCursor(); } return; }
-      if ((k === "Delete" || k === "Backspace") && V.selected) { e.preventDefault(); deleteSelected(); }
+      if ((k === "Delete" || k === "Backspace") && V.sel.size) { e.preventDefault(); deleteSelected(); }
       else if (k === "Escape") stopTool();
+      else if (k === "Enter" && V.poly) finishPoly();
       else if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "z") { e.preventDefault(); undo(); }
       else if (e.ctrlKey || e.metaKey || e.altKey) return;
       else if (k === "+" || k === "=") zoomAt(V.zoom * 1.25);
@@ -814,8 +868,8 @@
     $$("[data-color]").forEach(b => b.onclick = () => {
       V.color = b.dataset.color;
       PM.lsSet("netpower_pm_markup_color", V.color);
-      const s = selectedShape();
-      if (s && isMine(s.id) && s.t !== "pin") { pushUndo(); s.color = V.color; changed(); }
+      const sel = mySelected().filter(s => s.t !== "pin");
+      if (sel.length) { pushUndo(); sel.forEach(s => { s.color = V.color; }); changed(); }
       syncToolbar();
     });
     const on = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
@@ -826,8 +880,8 @@
       widthSel.onchange = () => {
         V.width = Number(widthSel.value);
         PM.lsSet("netpower_pm_markup_width", V.width);
-        const s = selectedShape();
-        if (s && isMine(s.id) && "w" in s) { pushUndo(); s.w = V.width; changed(); }
+        const sel = mySelected().filter(s => "w" in s);
+        if (sel.length) { pushUndo(); sel.forEach(s => { s.w = V.width; }); changed(); }
         widthSel.blur();
       };
     }
@@ -838,6 +892,9 @@
     $("#dvZoomOut").onclick = () => zoomAt(V.zoom / 1.4);
     $("#dvFit").onclick = fit;
     on("#dvPublish", publish);
+    on("#dvScale", () => scaleModal());
+    on("#dvToRfi", () => moveToRfiModal());
+    on("#dvCopyToSheet", copyToSheet);
     $("#dvRev").onchange = e => { location.hash = `#/p/${p.id}/drawings/${g.id}?rev=${e.target.value}`; };
     $("#dvSideBtn").onclick = () => document.body.classList.toggle("dv-side-open");
     updateHint();
@@ -974,7 +1031,10 @@
       return out;
     }
     function isMine(sid) { return V.mine.some(s => s.id === sid); }
-    function selectedShape() { const v = visibleShapes().find(x => x.s.id === V.selected); return v ? v.s : null; }
+    // Selection: one or more markups (lasso selects several)
+    function select(ids) { V.sel = new Set((Array.isArray(ids) ? ids : [ids]).filter(Boolean)); }
+    function selectedShape() { if (V.sel.size !== 1) return null; const id = [...V.sel][0]; const v = visibleShapes().find(x => x.s.id === id); return v ? v.s : null; }
+    function mySelected() { return V.mine.filter(s => V.sel.has(s.id)); }
 
     function pinInfo(s) {
       const t = Store.get(s.link && s.link.id);
@@ -1005,7 +1065,7 @@
       const z = V.zoom;
       const c = esc(s.color || COLORS[0]);
       const sw = s.t === "highlight" ? (s.w || 2.5) * 5.6 : (s.w || 2.5);
-      const cls = "shape" + (s.id === V.selected ? " sel" : "") + (mine && s.t !== "pin" ? " mine" : "");
+      const cls = "shape" + (V.sel.has(s.id) ? " sel" : "") + (mine && s.t !== "pin" ? " mine" : "");
       const title = `<title>${esc(owner || "")}${s.published ? "" : " (unpublished)"}</title>`;
       const hit = d => `<path d="${d}" fill="none" stroke="transparent" stroke-width="${Math.max(sw, 14 / z)}" class="hit" data-sid="${s.id}"/>`;
       const line = (x1, y1, x2, y2) => `M${x1} ${y1} L${x2} ${y2}`;
@@ -1041,6 +1101,22 @@
             <rect x="${s.x}" y="${s.y}" width="${b.w}" height="${b.h}" fill="${esc(s.fill || "#ffffff")}" fill-opacity="${s.fill ? 1 : 0}" stroke="${s.border ? c : "none"}" stroke-width="${Math.max(s.size / 14, 0.5)}" data-sid="${s.id}"/>
             ${b.lines.map((l, i) => `<text x="${s.x + b.pad}" y="${s.y + b.pad + b.lh * i + s.size * 0.92}" font-size="${s.size}" font-family="${esc(fontFamily(s))}" font-weight="${s.bold ? 700 : 400}" font-style="${s.italic ? "italic" : "normal"}" fill="${c}" ${halo} style="${style}" data-sid="${s.id}">${esc(l)}</text>`).join("")}</g>`;
         }
+        case "measure": {
+          const a = Math.atan2(s.y2 - s.y1, s.x2 - s.x1), tk = 7 / z, nx = -Math.sin(a) * tk, ny = Math.cos(a) * tk;
+          d = line(s.x1, s.y1, s.x2, s.y2) + ` M${s.x1 + nx} ${s.y1 + ny} L${s.x1 - nx} ${s.y1 - ny} M${s.x2 + nx} ${s.y2 + ny} L${s.x2 - nx} ${s.y2 - ny}`;
+          const len = Math.hypot(s.x2 - s.x1, s.y2 - s.y1), sc = curScale();
+          const label = s.cal ? "" : sc ? fmtFeet(len / sc.ptPerFt) : "Set scale";
+          return `<g class="${cls}">${title}<path d="${d}" stroke="${c}" stroke-width="${Math.max(sw / 2, 1 / z)}" fill="none"/>${hit(line(s.x1, s.y1, s.x2, s.y2))}
+            ${label ? labelSVG((s.x1 + s.x2) / 2, (s.y1 + s.y2) / 2 - 6 / z, label, c, s.id) : ""}</g>`;
+        }
+        case "area": {
+          const pts = s.pts.map(q => q.join(" ")).join(" L");
+          d = "M" + pts + " Z";
+          const sc = curScale(), a = polyArea(s.pts), per = polyPerimeter(s.pts, true);
+          const [cx, cy] = s.pts.reduce((m, q) => [m[0] + q[0] / s.pts.length, m[1] + q[1] / s.pts.length], [0, 0]);
+          const label = sc ? `${(a / sc.ptPerFt / sc.ptPerFt).toFixed(1)} sq ft · ${fmtFeet(per / sc.ptPerFt)} perimeter` : "Set scale";
+          return `<g class="${cls}">${title}<path d="${d}" fill="${c}" fill-opacity="0.12" stroke="${c}" stroke-width="${Math.max(sw / 2, 1 / z)}" data-sid="${s.id}"/>${hit(d)}${labelSVG(cx, cy, label, c, s.id)}</g>`;
+        }
         case "pin": {
           const info = pinInfo(s), r = 11 / z, fs = 11 / z, lw = (info.label.length * 6.6 + 10) / z;
           return `<g class="${cls} pin" data-sid="${s.id}"><title>${esc(info.label + ": " + info.title)}</title>
@@ -1053,10 +1129,17 @@
       return "";
     }
 
+    function labelSVG(x, y, text, c, sid) {
+      const fs = 12 / V.zoom;
+      return `<text x="${x}" y="${y}" text-anchor="middle" font-size="${fs}" font-family="Helvetica, Arial, sans-serif" font-weight="700" fill="${c}" stroke="#fff" stroke-width="${3 / V.zoom}" paint-order="stroke" data-sid="${sid}">${esc(text)}</text>`;
+    }
+    function polyArea(pts) { let a = 0; for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) a += (pts[j][0] + pts[i][0]) * (pts[j][1] - pts[i][1]); return Math.abs(a / 2); }
+    function polyPerimeter(pts, closed) { let l = 0; for (let i = 1; i < pts.length; i++) l += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); if (closed && pts.length > 2) l += Math.hypot(pts[0][0] - pts[pts.length - 1][0], pts[0][1] - pts[pts.length - 1][1]); return l; }
+
     // Drag handles for the selected markup (only your own)
     function handlesOf(s) {
       if (!s || !isMine(s.id)) return [];
-      if (s.t === "line" || s.t === "arrow") return [["x1,y1", s.x1, s.y1], ["x2,y2", s.x2, s.y2]];
+      if (s.t === "line" || s.t === "arrow" || s.t === "measure") return [["x1,y1", s.x1, s.y1], ["x2,y2", s.x2, s.y2]];
       if (s.t === "rect" || s.t === "cloud") return [["x1,y1", s.x1, s.y1], ["x2,y1", s.x2, s.y1], ["x1,y2", s.x1, s.y2], ["x2,y2", s.x2, s.y2]];
       if (s.t === "text" && s.v) { const b = textBox(s); return [["size", s.x + b.w, s.y + b.h]]; }
       return [];
@@ -1069,7 +1152,16 @@
     function draw() {
       const shapes = visibleShapes();
       shapes.sort((a, b) => (a.s.t === "pin") - (b.s.t === "pin"));
-      svg.innerHTML = shapes.map(v => shapeSVG(v.s, v.mine, v.owner)).join("") + (V.draft ? shapeSVG(V.draft, true, "") : "") + handlesSVG();
+      let extra = "";
+      if (V.poly) {
+        const z = V.zoom, pts = [...V.poly.pts, V.polyCursor].filter(Boolean);
+        extra += `<path d="M${pts.map(q => q.join(" ")).join(" L")}" fill="${esc(V.poly.color)}" fill-opacity="0.08" stroke="${esc(V.poly.color)}" stroke-width="${1.5 / z}" stroke-dasharray="${6 / z} ${4 / z}"/>`;
+        extra += V.poly.pts.map((q, i) => `<circle cx="${q[0]}" cy="${q[1]}" r="${(i ? 3 : 5) / z}" fill="#fff" stroke="${esc(V.poly.color)}" stroke-width="${1.5 / z}"/>`).join("");
+        const sc = curScale();
+        if (sc && pts.length > 2) extra += labelSVG(V.polyCursor[0], V.polyCursor[1] - 10 / z, (polyArea(pts) / sc.ptPerFt / sc.ptPerFt).toFixed(1) + " sq ft", esc(V.poly.color), "");
+      }
+      if (V.lasso) extra += `<path d="M${V.lasso.map(q => q.join(" ")).join(" L")} Z" fill="#1d63c9" fill-opacity="0.06" stroke="#1d63c9" stroke-width="${1.5 / V.zoom}" stroke-dasharray="${5 / V.zoom} ${4 / V.zoom}"/>`;
+      svg.innerHTML = shapes.map(v => shapeSVG(v.s, v.mine, v.owner)).join("") + (V.draft ? shapeSVG(V.draft, true, "") : "") + extra + handlesSVG();
       const unpub = V.mine.filter(s => !s.published).length;
       const pubBtn = $("#dvPublish");
       if (pubBtn) {
@@ -1077,10 +1169,13 @@
         pubBtn.disabled = !unpub;
         pubBtn.classList.toggle("primary", !!unpub);
       }
-      const sel = selectedShape(), mineSel = !!(sel && isMine(sel.id));
+      const sel = selectedShape(), mineSel = mySelected().length > 0;
       if ($("#dvDelete")) $("#dvDelete").disabled = !mineSel;
       if ($("#dvUndo")) $("#dvUndo").disabled = !V.undo.length;
-      if ($("#dvEditText")) $("#dvEditText").hidden = !(mineSel && sel.t === "text");
+      if ($("#dvEditText")) $("#dvEditText").hidden = !(mineSel && sel && sel.t === "text");
+      if ($("#dvToRfi")) $("#dvToRfi").hidden = !mySelected().some(x => x.t !== "pin");
+      const sc = curScale();
+      if ($("#dvScale")) $("#dvScale").textContent = "Scale: " + (sc ? sc.label : "not set");
     }
 
     function syncCursor() {
@@ -1096,7 +1191,7 @@
       syncCursor();
     }
     function updateHint() {
-      const t = TOOLS.find(x => x[0] === V.tool) || TOOLS[0];
+      const t = V.tool === "calibrate" ? ["calibrate", "", "Calibrate scale", "", CAL_HINT] : TOOLS.find(x => x[0] === V.tool) || TOOLS[0];
       hint.innerHTML = V.tool === "pan"
         ? esc(t[4])
         : `<strong>${esc(t[2])}:</strong> ${esc(t[4])}. <span class="dv-hint-stop">Right-click or Esc to stop.</span>`;
@@ -1107,9 +1202,11 @@
     }
     function setTool(t) {
       if (t !== "pan" && !PM.me()) { toast("Pick who you are first (top right) so your markups are saved under your name", true); PM.pickUser(); return; }
+      if ((t === "measure" || t === "area") && !curScale()) { scaleModal(t); return; }
+      V.poly = null; V.lasso = null;
       V.tool = t;
       V.draft = null;
-      if (t !== "pan") V.selected = null;
+      if (t !== "pan") select([]);
       hidePop();
       syncToolbar();
       updateHint();
@@ -1117,19 +1214,22 @@
     }
     // Right-click / Esc: cancel what's being drawn and go back to Select
     function stopTool() {
+      if (V.poly) { if (V.poly.pts.length >= 3) finishPoly(); else { V.poly = null; draw(); } return; }  // right-click finishes an area
+      if (V.lasso) { V.lasso = null; draw(); }
       if (V.draft) { V.draft = null; draw(); }
       if (V.tool !== "pan") setTool("pan");
-      else { V.selected = null; hidePop(); draw(); }
+      else { select([]); hidePop(); draw(); }
     }
 
     // ── Editing
     function pushUndo() { V.undo.push(JSON.stringify(V.mine)); if (V.undo.length > 60) V.undo.shift(); }
-    function undo() { if (!V.undo.length) return; V.mine = JSON.parse(V.undo.pop()); V.selected = null; hidePop(); changed(); }
+    function undo() { if (!V.undo.length) return; V.mine = JSON.parse(V.undo.pop()); select([]); hidePop(); changed(); }
     function deleteSelected() {
-      if (!V.selected || !isMine(V.selected)) { if (V.selected) toast("You can only delete your own markups", true); return; }
+      const ids = new Set(mySelected().map(s => s.id));
+      if (!ids.size) { if (V.sel.size) toast("You can only delete your own markups", true); return; }
       pushUndo();
-      V.mine = V.mine.filter(s => s.id !== V.selected);
-      V.selected = null;
+      V.mine = V.mine.filter(s => !ids.has(s.id));
+      select([]);
       hidePop();
       changed();
     }
@@ -1139,6 +1239,15 @@
       clearTimeout(V.saveTimer);
       if (!PM.me()) return;
       V.dirty = false;
+      if (V.rfi) {
+        const cur = Store.get(V.rfi.id) || V.rfi;
+        const rec = JSON.parse(JSON.stringify(cur));
+        const layers = (rec.data.markups || []).filter(m => !(m.drawingId === g.id && m.revId === rev.id));
+        if (V.mine.length) layers.push({ drawingId: g.id, revId: rev.id, sheet: g.data.number, title: g.data.title || "", rev: rev.rev, shapes: V.mine, updatedAt: new Date().toISOString() });
+        rec.data.markups = layers;
+        try { await Store.save(rec); V.rfi = Store.get(rec.id) || rec; } catch (e) { V.dirty = true; toast("RFI markups not saved: " + e.message, true); }
+        return;
+      }
       const existing = myRecord();
       const rec = { id: existing ? existing.id : uid("mk"), type: "markup", projectId: p.id, data: { drawingId: g.id, revId: rev.id, ownerId: PM.me(), ownerName: PM.meName(), shapes: V.mine, updatedAt: new Date().toISOString() } };
       try { await Store.save(rec); } catch (e) { V.dirty = true; toast("Markups not saved: " + e.message, true); }
@@ -1151,6 +1260,123 @@
       toast("Markups published — everyone on the project can see them");
     }
     function round(n) { return Math.round(n * 10) / 10; }
+
+    // ── Scale (stored on the sheet revision so everyone measures the same way)
+    function curScale() {
+      const fresh = Store.get(g.id) || g;
+      const r = (fresh.data.revisions || []).find(x => x.id === rev.id);
+      return r && r.scale && r.scale.ptPerFt > 0 ? r.scale : null;
+    }
+    async function saveScale(scale) {
+      if (!(PM.can ? PM.can(p.id, "drawings", "standard") : true)) { toast("You need edit rights on Drawings to set the scale", true); return false; }
+      const fresh = JSON.parse(JSON.stringify(Store.get(g.id) || g));
+      const r = (fresh.data.revisions || []).find(x => x.id === rev.id);
+      if (!r) return false;
+      r.scale = scale;
+      try { await Store.save(fresh); } catch (e) { toast("Scale not saved: " + e.message, true); return false; }
+      draw();
+      toast("Scale set to " + scale.label);
+      return true;
+    }
+    function scaleModal(thenTool) {
+      const sc = curScale();
+      PM.openModal({
+        title: "Set Drawing Scale",
+        noRender: true,
+        saveLabel: "Use this scale",
+        body: `
+          <p class="muted" style="margin-top:0">Measurements need the sheet's scale. Pick the scale printed on the drawing, or calibrate against a known dimension (best for half-size or scanned sheets).</p>
+          <div class="radio-list">
+            <label><input type="radio" name="scMode" value="std" checked> Standard scale
+              <select id="scStd" style="width:auto;margin-left:8px">${ARCH_SCALES.map(([l, v]) => `<option value="${v}" ${sc && sc.label === l ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+            <label><input type="radio" name="scMode" value="cal"> Calibrate — draw a line over a dimension I know</label>
+          </div>`,
+        onSave: root => {
+          const mode = $("input[name=scMode]:checked", root).value;
+          if (mode === "cal") { V.afterCal = thenTool || null; V.poly = null; V.lasso = null; V.tool = "calibrate"; syncToolbar(); updateHint(); return true; }
+          const sel = $("#scStd", root);
+          const inches = Number(sel.value);
+          saveScale({ ptPerFt: 72 * inches, label: sel.options[sel.selectedIndex].text }).then(ok => { if (ok && thenTool) setTool(thenTool); });
+          return true;
+        }
+      });
+    }
+    function calibrateModal(lenPt) {
+      PM.openModal({
+        title: "Calibrate Scale",
+        noRender: true,
+        saveLabel: "Set scale",
+        body: `<p class="muted" style="margin-top:0">How long is the line you just drew, in real life?</p>
+          <div class="inline-check" style="gap:8px"><input id="calFt" type="number" min="0" step="any" style="width:100px" aria-label="Feet"> ft
+          <input id="calIn" type="number" min="0" step="any" style="width:90px" aria-label="Inches"> in</div>`,
+        onOpen: root => setTimeout(() => $("#calFt", root).focus(), 30),
+        onSave: root => {
+          const ft = Number($("#calFt", root).value || 0) + Number($("#calIn", root).value || 0) / 12;
+          if (!(ft > 0)) { toast("Enter the real length", true); return false; }
+          const ptPerFt = lenPt / ft;
+          const paperIn = ptPerFt / 72;
+          saveScale({ ptPerFt, label: `Calibrated (${fmtFeet(ft)})`, paperInPerFt: paperIn }).then(ok => {
+            const next = V.afterCal; V.afterCal = null;
+            setTool(ok && next ? next : "pan");
+          });
+          return true;
+        }
+      });
+    }
+
+    // ── RFI markups: move selected sheet markups onto an RFI, or copy an RFI's markups onto the sheet
+    function moveToRfiModal() {
+      const shapes = mySelected().filter(x => x.t !== "pin");
+      if (!shapes.length) return;
+      const rfis = Store.all("rfi", p.id).sort((a, b) => b.data.number - a.data.number);
+      PM.openModal({
+        title: "Move Markups to an RFI",
+        noRender: true,
+        saveLabel: "Move",
+        body: `<p class="muted" style="margin-top:0">${shapes.length} markup${shapes.length > 1 ? "s" : ""} will be removed from the main drawing and kept only on the RFI.</p>
+          <div class="radio-list">
+            <label><input type="radio" name="mvTo" value="new" checked> Create a new RFI with these markups</label>
+            <label><input type="radio" name="mvTo" value="old" ${rfis.length ? "" : "disabled"}> Add to an existing RFI
+              <select id="mvRfi" style="width:auto;margin-left:8px">${rfis.map(r => `<option value="${r.id}">#${esc(r.data.number)} — ${esc(r.data.subject || "")}</option>`).join("")}</select></label>
+          </div>`,
+        onSave: root => {
+          const v = $("input[name=mvTo]:checked", root).value;
+          if (v === "old") { moveShapesToRfi(shapes, Store.get($("#mvRfi", root).value)); return true; }
+          setTimeout(() => PM.editRFI(p, null, { defaults: { drawing: g.data.number + (g.data.title ? " " + g.data.title : "") + " (Rev " + rev.rev + ")" }, onCreated: rec => moveShapesToRfi(shapes, rec) }), 0);
+          return true;
+        }
+      });
+    }
+    async function moveShapesToRfi(shapes, r) {
+      if (!r) return;
+      const rec = JSON.parse(JSON.stringify(Store.get(r.id) || r));
+      const layers = rec.data.markups || [];
+      let layer = layers.find(m => m.drawingId === g.id && m.revId === rev.id);
+      if (!layer) { layer = { drawingId: g.id, revId: rev.id, sheet: g.data.number, title: g.data.title || "", rev: rev.rev, shapes: [] }; layers.push(layer); }
+      layer.shapes.push(...shapes.map(x => ({ ...JSON.parse(JSON.stringify(x)), published: true })));
+      layer.updatedAt = new Date().toISOString();
+      rec.data.markups = layers;
+      try { await Store.save(rec); } catch (e) { toast("Could not move markups: " + e.message, true); return; }
+      pushUndo();
+      const ids = new Set(shapes.map(x => x.id));
+      V.mine = V.mine.filter(x => !ids.has(x.id));
+      V.undo = [];  // the markups now live on the RFI
+      select([]);
+      changed();
+      saveNow();
+      toast(`Moved ${shapes.length} markup${shapes.length > 1 ? "s" : ""} to RFI #${rec.data.number}`);
+    }
+    async function copyToSheet() {
+      const src = V.sel.size ? V.mine.filter(x => V.sel.has(x.id)) : V.mine;
+      if (!src.length) { toast("This RFI has no markups on this sheet yet"); return; }
+      if (!PM.me()) return;
+      const existing = myRecord();
+      const shapes = JSON.parse(JSON.stringify(existing ? existing.data.shapes || [] : []));
+      shapes.push(...src.map(x => ({ ...JSON.parse(JSON.stringify(x)), id: uid("s"), published: false, fromRfi: V.rfi.id })));
+      const rec = { id: existing ? existing.id : uid("mk"), type: "markup", projectId: p.id, data: { drawingId: g.id, revId: rev.id, ownerId: PM.me(), ownerName: PM.meName(), shapes, updatedAt: new Date().toISOString() } };
+      try { await Store.save(rec); } catch (e) { toast("Not copied: " + e.message, true); return; }
+      toast(`Copied ${src.length} markup${src.length > 1 ? "s" : ""} to the main drawing as your unpublished markups — open the sheet and click Publish to share them`);
+    }
 
     // Move a shape by (dx, dy) starting from its original copy o
     function moveShape(s, o, dx, dy) {
@@ -1187,23 +1413,27 @@
       if (V.tool === "pan") {
         if (handleEl) {
           const s = selectedShape();
-          V.drag = { mode: "resize", handle: handleEl.dataset.handle, s, o: JSON.parse(JSON.stringify(s)), start: pt, moved: false };
+          V.drag = { mode: "resize", handle: handleEl.dataset.handle, s, o: JSON.parse(JSON.stringify(s)), start: pt, moved: false, canMove: true };
           wrap.setPointerCapture(e.pointerId);
           e.preventDefault();
           return;
         }
         if (hitEl) {
-          V.selected = hitEl.dataset.sid;
-          const s = selectedShape();
+          const sid = hitEl.dataset.sid;
+          // clicking a markup that's part of a lasso selection keeps the group (to move it together)
+          if (!(V.sel.has(sid) && V.sel.size > 1)) select(sid);
+          const v = visibleShapes().find(x => x.s.id === sid);
           hidePop();
           draw();
-          if (!s) return;
-          if (!isMine(s.id) && s.t !== "pin") toast("Markup by " + (visibleShapes().find(v => v.s.id === s.id) || {}).owner);
-          V.drag = { mode: "move", s, o: JSON.parse(JSON.stringify(s)), start: pt, moved: false, canMove: isMine(s.id) && e.pointerType === "mouse" };
+          if (!v) return;
+          const s = v.s;
+          if (!isMine(s.id) && s.t !== "pin") toast("Markup by " + v.owner);
+          const group = V.sel.size > 1 ? mySelected() : (isMine(s.id) ? [s] : []);
+          V.drag = { mode: "move", s, items: group.map(x => ({ s: x, o: JSON.parse(JSON.stringify(x)) })), start: pt, moved: false, canMove: group.length > 0 && e.pointerType === "mouse" };
           if (V.drag.canMove) { wrap.setPointerCapture(e.pointerId); e.preventDefault(); }
           return;
         }
-        V.selected = null;
+        select([]);
         hidePop();
         draw();
         if (e.pointerType === "mouse") { e.preventDefault(); startPan(e); }
@@ -1211,11 +1441,28 @@
       }
       if (!PM.me()) { setTool("pan"); return; }
       if (!inPage(pt)) { if (e.pointerType === "mouse") { e.preventDefault(); startPan(e); } return; }
-      const base = { id: uid("s"), color: V.color, published: false, by: PM.meName(), at: new Date().toISOString() };
+      const base = { id: uid("s"), color: V.color, published: !!V.rfi, by: PM.meName(), at: new Date().toISOString() };
+      const p0 = [round(pt.x), round(pt.y)];
       if (V.tool === "pen" || V.tool === "highlight") {
-        V.draft = { ...base, t: V.tool, w: V.width, pts: [[round(pt.x), round(pt.y)]] };
-      } else if (["line", "arrow", "rect", "cloud"].includes(V.tool)) {
-        V.draft = { ...base, t: V.tool, w: V.width, x1: round(pt.x), y1: round(pt.y), x2: round(pt.x), y2: round(pt.y) };
+        V.draft = { ...base, t: V.tool, w: V.width, pts: [p0] };
+      } else if (["line", "arrow", "rect", "cloud", "measure"].includes(V.tool)) {
+        V.draft = { ...base, t: V.tool, w: V.width, x1: p0[0], y1: p0[1], x2: p0[0], y2: p0[1] };
+      } else if (V.tool === "calibrate") {
+        V.draft = { id: "cal", t: "measure", cal: true, color: "#1d63c9", w: 2, x1: p0[0], y1: p0[1], x2: p0[0], y2: p0[1] };
+      } else if (V.tool === "lasso") {
+        V.lasso = [p0];
+      } else if (V.tool === "area") {
+        e.preventDefault();
+        const now = Date.now();
+        if (!V.poly) { V.poly = { ...base, t: "area", w: V.width, pts: [p0] }; V.polyCursor = p0; V.polyTap = now; draw(); return; }
+        const first = V.poly.pts[0];
+        const nearFirst = Math.hypot(p0[0] - first[0], p0[1] - first[1]) * V.zoom < 10;
+        const dbl = now - (V.polyTap || 0) < 350;
+        V.polyTap = now;
+        if ((nearFirst || dbl) && V.poly.pts.length >= 3) { finishPoly(); return; }
+        if (!dbl) V.poly.pts.push(p0);
+        draw();
+        return;
       } else if (V.tool === "text") {
         e.preventDefault();
         textEditor(pt, null, base);
@@ -1236,7 +1483,7 @@
       }
       if (V.drag) {
         const d = V.drag;
-        if (!d.canMove && d.mode === "move") return;
+        if (!d.canMove) return;
         const pt = toPage(e);
         if (!d.moved) {
           if (Math.hypot(pt.x - d.start.x, pt.y - d.start.y) * V.zoom < 3) return;
@@ -1244,8 +1491,21 @@
           d.moved = true;
           hidePop();
         }
-        if (d.mode === "move") moveShape(d.s, d.o, pt.x - d.start.x, pt.y - d.start.y);
+        if (d.mode === "move") d.items.forEach(it => moveShape(it.s, it.o, pt.x - d.start.x, pt.y - d.start.y));
         else resizeShape(d.s, d.o, d.handle, clampPt(pt));
+        draw();
+        return;
+      }
+      if (V.lasso) {
+        const pt = clampPt(toPage(e)), last = V.lasso[V.lasso.length - 1];
+        if (Math.hypot(pt.x - last[0], pt.y - last[1]) * V.zoom < 3) return;
+        V.lasso.push([round(pt.x), round(pt.y)]);
+        draw();
+        return;
+      }
+      if (V.poly) {
+        const pt = clampPt(toPage(e));
+        V.polyCursor = [round(pt.x), round(pt.y)];
         draw();
         return;
       }
@@ -1280,15 +1540,53 @@
         if (d.s.t === "text" && isMine(d.s.id) && last && last.sid === d.s.id && now - last.at < 450) { V.lastTap = null; textEditor(null, d.s); }
         return;
       }
+      if (V.lasso) { finishLasso(); return; }
       if (!V.draft) return;
       const d = V.draft;
       V.draft = null;
       const tiny = d.pts ? d.pts.length < 2 : Math.hypot(d.x2 - d.x1, d.y2 - d.y1) * V.zoom < 4;
       if (tiny) { draw(); return; }
+      if (d.cal) { calibrateModal(Math.hypot(d.x2 - d.x1, d.y2 - d.y1)); draw(); return; }
       addShape(d);
     };
     wrap.addEventListener("pointerup", endPointer);
     wrap.addEventListener("pointercancel", endPointer);
+
+    // ── Lasso: select every one of your markups that lies completely inside the loop
+    function keyPoints(s) {
+      if (s.pts) return s.pts;
+      if (s.t === "rect" || s.t === "cloud") return [[s.x1, s.y1], [s.x2, s.y1], [s.x1, s.y2], [s.x2, s.y2]];
+      if ("x1" in s) return [[s.x1, s.y1], [s.x2, s.y2]];
+      if (s.t === "text" && s.v) { const b = textBox(s); return [[s.x, s.y], [s.x + b.w, s.y], [s.x, s.y + b.h], [s.x + b.w, s.y + b.h]]; }
+      return [[s.x, s.y]];
+    }
+    function inPoly(pt, poly) {
+      let inside = false;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const [xi, yi] = poly[i], [xj, yj] = poly[j];
+        if ((yi > pt[1]) !== (yj > pt[1]) && pt[0] < (xj - xi) * (pt[1] - yi) / (yj - yi) + xi) inside = !inside;
+      }
+      return inside;
+    }
+    function finishLasso() {
+      const loop = V.lasso;
+      V.lasso = null;
+      if (loop.length < 3) { draw(); return; }
+      const hits = V.mine.filter(s => keyPoints(s).every(q => inPoly(q, loop)));
+      setTool("pan");
+      select(hits.map(s => s.id));
+      draw();
+      updateHint();
+      toast(hits.length ? `${hits.length} markup${hits.length > 1 ? "s" : ""} selected — drag to move, Delete to remove${!V.rfi && rfiEditable() ? ", or Move to RFI" : ""}` : "No markups of yours inside the lasso");
+    }
+
+    // ── Area: click points, then double-click, click the first point, or right-click to finish
+    function finishPoly() {
+      const d = V.poly;
+      V.poly = null;
+      if (d && d.pts.length >= 3) addShape(d);
+      else draw();
+    }
 
     // ── Text editor (new text or editing existing)
     function textDefaults() {
@@ -1349,7 +1647,7 @@
           const fields = { v: 2, text, font: st.font, size: st.size, bold: st.bold, italic: st.italic, underline: st.underline, fill: st.fill, border: st.border, color: st.color };
           PM.lsSet("netpower_pm_text_style", { font: st.font, bold: st.bold, italic: st.italic, underline: st.underline, fill: st.fill, border: st.border });
           if (existing) {
-            if (!text.trim()) { V.selected = existing.id; deleteSelected(); return true; }
+            if (!text.trim()) { select(existing.id); deleteSelected(); return true; }
             pushUndo();
             if (!existing.v) existing.y = round(existing.y - existing.size * 1.25);  // old text: baseline → top-left
             Object.assign(existing, fields);
@@ -1423,7 +1721,7 @@
       if (!v) return;
       setZoom(Math.max(V.zoom, fitZoom() * 2.5));
       centerOn(v.s.x, v.s.y);
-      V.selected = sid;
+      select(sid);
       draw();
       showPop(v.s);
       scheduleTile();
@@ -1439,11 +1737,16 @@
       side.innerHTML = `
         <div class="dv-sec"><h3>Linked Items (${pins.length})</h3>
           ${pins.length ? pins.map(v => { const i = pinInfo(v.s); return `<div class="dv-link" data-focus="${v.s.id}"><span class="dot" style="background:${i.color}"></span><strong>${esc(i.label)}</strong> ${esc(i.title)}</div>`; }).join("") : `<p class="muted">Use 📍 to pin RFIs or punch items to a spot on this sheet.</p>`}</div>
-        <div class="dv-sec"><h3>Markups</h3>
+        ${V.rfi ? `<div class="dv-sec"><h3>RFI #${esc(V.rfi.data.number)} Markups</h3>
+          <div>${V.mine.length} markup${V.mine.length === 1 ? "" : "s"} on this sheet</div>
+          <p class="muted" style="font-size:12px">Anyone who can see this RFI sees these markups. They don't appear on the main drawing unless you click "Copy to main drawing".</p></div>`
+        : `<div class="dv-sec"><h3>Markups</h3>
           <div>Mine: ${V.mine.filter(s => s.t !== "pin").length} <span class="muted">(${V.mine.filter(s => !s.published).length} unpublished)</span></div>
           <label class="inline-check" style="margin-top:6px"><input type="checkbox" id="dvOthers" ${V.showOthers ? "checked" : ""}> Show others' published markups</label>
           ${otherRecs.map(m => `<div class="muted" style="font-size:13px">${esc(m.data.ownerName)}: ${(m.data.shapes || []).filter(s => s.published && s.t !== "pin").length}</div>`).join("")}
           <p class="muted" style="font-size:12px">Unpublished markups are only shown to you. Click Publish to share them with the project.</p></div>
+        <div class="dv-sec"><h3>RFI Markups</h3>
+          ${(() => { const list = Store.all("rfi", p.id).map(r => ({ r, l: rfiLayer(r) })).filter(x => x.l && (x.l.shapes || []).length); return list.length ? list.map(x => `<a class="dv-link" href="#/p/${p.id}/drawings/${g.id}?rev=${rev.id}&rfi=${x.r.id}"><span class="dot" style="background:#1d63c9"></span><strong>RFI ${esc(x.r.data.number)}</strong> ${esc(x.r.data.subject || "")} <span class="muted">(${x.l.shapes.length})</span></a>`).join("") : `<p class="muted" style="font-size:13px">Markups made for an RFI are kept on the RFI and listed here. Select markups (or lasso them) and use "Move to RFI".</p>`; })()}</div>`}
         <div class="dv-sec"><h3>Revisions</h3>
           ${revs.map(r => `<div class="dv-rev ${r.id === rev.id ? "on" : ""}"><a href="#/p/${p.id}/drawings/${g.id}?rev=${r.id}">Rev ${esc(r.rev)}</a> <span class="muted">${esc(r.setName || "")} · ${PM.fmtDate(r.drawingDate || r.at)}</span>
             ${r.id === g.data.current ? PM.pill("Current") : `<button class="btn small" data-perm="drawings:admin" data-makecur="${r.id}">Make current</button>`}</div>`).join("")}</div>
@@ -1455,7 +1758,7 @@
             <button class="btn small danger" id="dvDel" data-perm="drawings:admin">Delete sheet</button></div></div>
         ${historyHTML()}`;
       $$("[data-focus]", side).forEach(el => el.onclick = () => { document.body.classList.remove("dv-side-open"); focusPin(el.dataset.focus); });
-      $("#dvOthers", side).onchange = e => { V.showOthers = e.target.checked; PM.lsSet("netpower_pm_show_others", V.showOthers); V.selected = null; hidePop(); draw(); renderSide(); };
+      if ($("#dvOthers", side)) $("#dvOthers", side).onchange = e => { V.showOthers = e.target.checked; PM.lsSet("netpower_pm_show_others", V.showOthers); select([]); hidePop(); draw(); renderSide(); };
       PM.applyPerms(side);
       $$("[data-makecur]", side).forEach(b => b.onclick = () => makeCurrent(b.dataset.makecur));
       if ($("#dvEdit", side)) $("#dvEdit", side).onclick = editInfo;
@@ -1506,6 +1809,6 @@
     }
   }
 
-  PM.drawings = { log, viewer, linksPanel, detectSheet, disciplineFor, sheetsOf, currentRev };
+  PM.drawings = { log, viewer, linksPanel, rfiMarkupsPanel, detectSheet, disciplineFor, sheetsOf, currentRev };
   PM.files = { upload: uploadFile, readableUrl, fileObjectUrl, deleteFiles };
 })();

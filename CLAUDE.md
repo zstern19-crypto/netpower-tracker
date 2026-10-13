@@ -29,6 +29,8 @@
 ## Configuration (Vercel environment variables)
 
 - `AIRTABLE_TOKEN` — Material Tracker (`api/airtable.js`), base `appDvscikJtSDsoku`, table "Table 1".
+- `ANTHROPIC_API_KEY` — Material Tracker invoice reading (`api/claude.js`). Owner-only: requires a NetPower PM sign-in
+  (same browser) as a company admin whose email is in `CLAUDE_ALLOWED_EMAILS` (default zevy@netpowerelectric.com).
 - `PM_AIRTABLE_TOKEN`, `PM_AIRTABLE_BASE` — NetPower PM (`api/pm.js`), table "PM Records"
   (fields RecID, Type, ProjectID: single line text; Data: long text).
 - Vercel Blob store connected via OIDC (`BLOB_STORE_ID`, `BLOB_WEBHOOK_PUBLIC_KEY`); `api/blob.js`
@@ -36,3 +38,7 @@
 - `PM_SESSION_SECRET` — optional; signs PM login cookies (falls back to a value derived from `PM_AIRTABLE_TOKEN`).
 - PM logins: users are `user` records in the same Airtable table (scrypt password hashes); the first visitor
   creates the company admin. Permission logic lives in `lib/auth.js` and is enforced in `api/pm.js` / `api/blob.js`.
+- Notifications / reminder rules (daily logs, certifications) live in `lib/notify.js` so a scheduled job can reuse them
+  for email / WhatsApp (not built yet; the user's email is Outlook / Microsoft 365).
+- `api/mcp.js` is the Claude connector (MCP). Keys are per user (`/api/mcp?key=<userId>.<secret>`, only a hash stored).
+- Airtable free plan is ~1,000 API calls/month; the owner chose to keep Airtable for now ("decide later").

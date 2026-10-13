@@ -60,6 +60,39 @@
   }
 
   // ───────────────────────── User menu ─────────────────────────
+  // Claude connector: a private link that lets Claude create RFIs etc. as this user
+  function connectClaude() {
+    const u = PM.session.user;
+    const draw = (root, key) => {
+      const url = key ? `${location.origin}/api/mcp?key=${encodeURIComponent(key)}` : "";
+      $("#ccBody", root).innerHTML = `
+        <p style="margin-top:0">Connect Claude to NetPower PM so you can say things like <em>“Create an RFI on Riverside: conduit conflicts with the duct at grid C4, assign it to Alex Architect”</em> — without opening the app. Claude acts as <strong>${esc(u.name)}</strong> and can only do what you're allowed to do here.</p>
+        ${url ? `<div class="field"><label for="ccUrl">Your private connector link</label><div class="with-mic"><input id="ccUrl" readonly value="${esc(url)}"><button type="button" class="btn small" id="ccCopy">Copy</button></div>
+            <div class="field-err" style="display:block">Treat this link like a password — anyone who has it can act as you. It's shown only once.</div></div>
+          <ol class="cc-steps">
+            <li>Open <a href="https://claude.ai/customize/connectors" target="_blank" rel="noopener">claude.ai → Customize → Connectors</a>.</li>
+            <li>Click <strong>Add custom connector</strong>. Name it <strong>NetPower PM</strong>.</li>
+            <li>Paste the link above as the server URL. If it asks about sign-in, choose <strong>No sign-in</strong>.</li>
+            <li>Click <strong>Add</strong>. In a chat, turn on NetPower PM from the <strong>+</strong> menu → Connectors.</li></ol>`
+          : `<p>${u.hasConnector ? `✓ You have a connector link (created ${PM.fmtDate(u.connectorAt)}). If you lost it, create a new one — the old one stops working.` : "You haven't connected Claude yet."}</p>`}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+          <button type="button" class="btn primary" id="ccNew">${u.hasConnector || url ? "Create a new link" : "Create my connector link"}</button>
+          ${u.hasConnector || url ? `<button type="button" class="btn danger" id="ccRevoke">Disconnect (revoke link)</button>` : ""}</div>`;
+      const copy = $("#ccCopy", root);
+      if (copy) copy.onclick = async () => { try { await navigator.clipboard.writeText(url); toast("Link copied"); } catch (e) { $("#ccUrl", root).select(); } };
+      $("#ccNew", root).onclick = async () => {
+        if (u.hasConnector && !window.confirm("Create a new link? The old link stops working right away.")) return;
+        try { const d = await post("connectorKey", {}); u.hasConnector = true; u.connectorAt = new Date().toISOString(); draw(root, d.key); } catch (e) { toast(e.message, true); }
+      };
+      const rv = $("#ccRevoke", root);
+      if (rv) rv.onclick = async () => {
+        if (!window.confirm("Disconnect Claude? Your connector link stops working right away.")) return;
+        try { await post("connectorKey", { revoke: true }); u.hasConnector = false; draw(root, null); toast("Claude disconnected"); } catch (e) { toast(e.message, true); }
+      };
+    };
+    PM.openModal({ title: "Connect Claude", noRender: true, hideSave: true, body: `<div id="ccBody"></div>`, onOpen: root => draw(root, null) });
+  }
+
   function userMenu(e) {
     e.stopPropagation();
     let m = $("#userMenu");
@@ -72,6 +105,8 @@
     m.innerHTML = `
       <div class="um-head"><strong>${esc(u.name)}</strong><div class="muted">${esc(u.email)}</div>${PM.session.isAdmin ? `<span class="pill admin-pill">Company admin</span>` : ""}</div>
       ${PM.session.isAdmin ? `<a href="#/admin/users" role="menuitem">Users</a><a href="#/admin/templates" role="menuitem">Permission Templates</a>` : ""}
+      <a href="#" data-um="profile" role="menuitem">My profile (photo, trade, phone)</a>
+      <a href="#" data-um="claude" role="menuitem">Connect Claude</a>
       <a href="#" data-um="password" role="menuitem">Change password</a>
       <a href="#" data-um="logout" role="menuitem">Sign out</a>`;
     document.body.appendChild(m);
@@ -84,6 +119,8 @@
       ev.preventDefault();
       if (a.dataset.um === "logout") { await post("logout").catch(() => {}); location.hash = "#/"; location.reload(); }
       if (a.dataset.um === "password") changePassword();
+      if (a.dataset.um === "profile" && PM.people) PM.people.myProfile();
+      if (a.dataset.um === "claude") connectClaude();
     };
   }
 
@@ -162,8 +199,10 @@
         <div class="field" style="align-self:end"><label class="inline-check"><input type="checkbox" id="usAdmin" ${u && u.companyAdmin ? "checked" : ""} ${isSelf ? "disabled" : ""}> Company admin (full access to everything)</label></div>
         ${isNew ? "" : `<div class="field"><label class="inline-check"><input type="checkbox" id="usActive" ${u.active ? "checked" : ""} ${isSelf ? "disabled" : ""}> Active (can sign in)</label></div>`}
         </div>
+        ${PM.people ? PM.people.profileFieldsHTML(u) : ""}
         <p class="muted" style="font-size:12px">Share the password with them privately. Emails aren't sent automatically yet. ${contact ? "" : ""}</p>`,
       onOpen: root => {
+        if (PM.people) PM.people.wireProfileFields(root);
         const pick = $("#usContact", root);
         if (pick) pick.onchange = () => {
           const c = Store.get(pick.value);
@@ -174,7 +213,8 @@
         const body = {
           ...(u ? { id: u.id } : {}),
           name: $("#usName", root).value.trim(),
-          email: $("#usEmail", root).value.trim()
+          email: $("#usEmail", root).value.trim(),
+          ...(PM.people ? PM.people.readProfile(root) : {})
         };
         const pw = $("#usPass", root).value;
         if (pw) body.password = pw;
@@ -184,6 +224,7 @@
           body.contactId = $("#usContact", root).value;
         } else if (!isSelf) body.active = $("#usActive", root).checked;
         await post("saveUser", body);
+        if (PM.people) PM.people.invalidate();
         Store.loaded.delete("contact|");
         toast(isNew ? "User added" : "User saved");
         return true;
