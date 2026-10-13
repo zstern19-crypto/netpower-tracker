@@ -971,6 +971,7 @@
             <button class="btn primary" data-act="rfiRespond" data-id="${r.id}">Post Response</button></div></div>` : `<p class="muted no-print">Open the RFI to collect responses.</p>`}
       </div>
       ${drawingLinksPanel(p, r.id)}
+      ${PM.drawings && PM.drawings.rfiMarkupsPanel ? PM.drawings.rfiMarkupsPanel(p, r) : ""}
       ${historyPanel(d)}`;
   }
 

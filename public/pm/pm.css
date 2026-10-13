@@ -234,7 +234,7 @@ body.viewer-mode main { padding: 0; }
 .dv-tools .tool .tl { font-size: 13px; }
 .dv-tools .dv-markup { display: contents; }
 .dv-tools .dv-width { width: auto; flex: none; padding: 4px 6px; font-size: 13px; margin-left: 6px; }
-@media (max-width: 1280px) { .dv-tools .tool .tl { display: none; } }
+@media (max-width: 1599px) { .dv-tools .tool .tl { display: none; } }
 .dv-tools .tool:hover { background: #eef0f3; }
 .dv-tools .tool.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .dv-tools .tool:disabled { opacity: .35; cursor: default; }
@@ -376,3 +376,8 @@ body.auth-mode main { display: flex; justify-content: center; align-items: flex-
 @media (max-width: 1000px) { .fgrid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 720px) { .fgrid-2, .fgrid-4 { grid-template-columns: 1fr; } .form-foot { padding: 10px 16px; flex-wrap: wrap; } }
 @media (max-width: 700px) { .dv-hint:not(.active) { display: none; } }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.panel-head h2 { margin: 0; }
+.dv-rfi-banner { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; background: #e8f0fc; border-bottom: 1px solid #b9cdf0; color: #12407f; font-size: 14px; }
+.dv-rfi-banner .spacer { flex: 1; }
+.dv-head .dv-scale { font-weight: 400; }
