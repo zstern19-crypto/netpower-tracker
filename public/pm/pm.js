@@ -940,7 +940,7 @@
     };
     return `
       <div class="page-head"><h1>RFIs</h1><span class="sub">Requests for Information</span>
-        <div class="actions"><button class="btn" data-act="exportRFIs" data-project="${p.id}">Export CSV</button><button class="btn primary" data-perm="rfis:standard" data-act="newRFI" data-project="${p.id}">+ Create RFI</button></div></div>
+        <div class="actions"><button class="btn" id="rfiListExportBtn" data-act="rfiExportList" data-project="${p.id}" aria-haspopup="true">Export ▾</button><button class="btn primary" data-perm="rfis:standard" data-act="newRFI" data-project="${p.id}">+ Create RFI</button></div></div>
       <div class="panel flush">${toolbarHTML(key, RFI_STATUSES)}
         <div class="table-wrap"><table class="list"><thead><tr><th>#</th><th>Subject</th><th>Status</th><th>Ball In Court</th><th>Due</th><th>Responses</th><th>Impact</th></tr></thead>
         <tbody id="listBody">${LIST_RENDERERS[key]()}</tbody></table></div></div>`;
@@ -970,7 +970,7 @@
           <select class="status-select" data-perm="rfis:standard" data-act="rfiSetStatus" data-id="${r.id}" aria-label="Change status" title="Change status">
             ${RFI_STATUSES.map(st => `<option value="${st}" ${st === d.status ? "selected" : ""}>Status: ${st}</option>`).join("")}</select>
           <button class="btn" data-perm="rfis:standard" data-act="editRFI" data-id="${r.id}">Edit</button>
-          <button class="btn" onclick="window.print()">Print / PDF</button>
+          <button class="btn" id="rfiExportBtn" data-act="rfiExport" data-id="${r.id}" aria-haspopup="true">Export ▾</button>
           <button class="btn danger" data-perm="rfis:admin" data-act="deleteRecord" data-id="${r.id}" data-label="RFI" data-back="#/p/${p.id}/rfis">Delete</button>
         </div></div>
       <div class="panel"><div class="info-grid">${info.map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join("")}</div></div>

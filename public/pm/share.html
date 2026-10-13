@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>RFI — NetPower Electric</title>
+<style>
+  :root { --ink: #1f2328; --muted: #5f6b7a; --line: #e3e6ea; --accent: #f26722; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--ink); background: #f3f4f6; }
+  header { background: #1f2328; color: #fff; padding: 12px 20px; display: flex; align-items: center; gap: 12px; }
+  header b span { color: var(--accent); }
+  main { max-width: 900px; margin: 20px auto; padding: 0 16px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; margin-bottom: 14px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 0 0 10px; }
+  .muted { color: var(--muted); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px 18px; }
+  .k { font-size: 12px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
+  .pill { display: inline-block; padding: 1px 10px; border-radius: 10px; background: #eef0f3; font-size: 13px; font-weight: 600; }
+  .pill.Open { background: #e8f0fc; color: #1d4f9c; } .pill.Closed { background: #e8f5ee; color: #1f7a45; }
+  .prose { white-space: pre-wrap; }
+  .imgs { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+  .imgs figure { margin: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .imgs img { width: 100%; display: block; background: #f6f7f9; min-height: 80px; }
+  .imgs figcaption { font-size: 12px; padding: 4px 6px; color: var(--muted); }
+  .resp { border-top: 1px solid var(--line); padding: 10px 0; } .resp:first-of-type { border-top: 0; }
+  .official { border-left: 3px solid #1f9d55; padding-left: 10px; }
+  .btn { display: inline-block; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line); background: #fff; color: var(--ink); cursor: pointer; font: inherit; text-decoration: none; }
+  @media print { header .btn { display: none; } body { background: #fff; } .card { border: 0; padding: 0 0 12px; } }
+</style>
+</head>
+<body>
+<header><b>Net<span>Power</span> Electric</b><span class="muted" style="color:#aab">View-only RFI</span><span style="flex:1"></span><button class="btn" onclick="print()">Print / Save PDF</button></header>
+<main id="main"><div class="card">Loading…</div></main>
+<script>
+(async () => {
+  const main = document.getElementById("main");
+  const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const fmt = s => (s ? new Date(s.length === 10 ? s + "T12:00:00" : s).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—");
+  const t = new URLSearchParams(location.search).get("t") || "";
+  let d;
+  try { d = await fetch("/api/pm?action=shared&t=" + encodeURIComponent(t)).then(r => r.json()); } catch (e) { d = { ok: false, error: "Couldn't load this RFI." }; }
+  if (!d.ok) { main.innerHTML = `<div class="card"><h1>Link not available</h1><p class="muted">${esc(d.error || "This link is no longer valid.")}</p></div>`; return; }
+  const r = d.rfi, p = d.project || {};
+  document.title = `RFI #${r.number} ${r.subject} — ${p.name || ""}`;
+  const isImg = f => /^image\//.test(f.type) || /\.(jpe?g|png|gif|webp)$/i.test(f.name);
+  const row = (k, v) => v ? `<div><div class="k">${k}</div><div>${esc(v)}</div></div>` : "";
+  main.innerHTML = `
+    <div class="card"><div class="muted">${esc(p.name || "")}${p.number ? " · " + esc(p.number) : ""}${p.address ? " · " + esc(p.address) : ""}</div>
+      <h1>RFI #${esc(r.number)}: ${esc(r.subject)}</h1><span class="pill ${esc(r.status)}">${esc(r.status)}</span>
+      <div class="grid" style="margin-top:14px">${row("Due date", fmt(r.due))}${row("RFI manager", r.manager)}${row("Assignees", r.assignees.join(", "))}${row("Received from", r.receivedFrom)}
+        ${row("Responsible contractor", r.responsibleContractor)}${row("Location", r.location)}${row("Drawing", r.drawing)}${row("Spec section", r.specSection)}
+        ${row("Cost impact", r.costImpact)}${row("Schedule impact", r.scheduleImpact)}${row("Created", fmt(r.createdAt) + (r.createdBy ? " by " + r.createdBy : ""))}</div></div>
+    <div class="card"><h2>Question</h2><div class="prose">${esc(r.question)}</div>
+      ${r.suggestion ? `<h2 style="margin-top:14px">Suggested answer</h2><div class="prose">${esc(r.suggestion)}</div>` : ""}</div>
+    ${r.attachments.length ? `<div class="card"><h2>Attachments</h2>
+      <div class="imgs">${r.attachments.filter(isImg).map((f, i) => `<figure><img data-i="${r.attachments.indexOf(f)}" alt="${esc(f.name)}"><figcaption>${esc(f.name)}</figcaption></figure>`).join("")}</div>
+      ${r.attachments.filter(f => !isImg(f)).map(f => `<div>📎 <a href="#" data-i="${r.attachments.indexOf(f)}">${esc(f.name)}</a></div>`).join("")}</div>` : ""}
+    <div class="card"><h2>Responses (${r.responses.length})</h2>${r.responses.map(x => `<div class="resp ${x.official ? "official" : ""}"><b>${esc(x.by)}</b> <span class="muted">${fmt(x.at)}${x.official ? " · Official response" : ""}</span><div class="prose">${esc(x.text)}</div></div>`).join("") || `<p class="muted">No responses yet.</p>`}</div>
+    <p class="muted" style="font-size:13px">Shared from NetPower PM. This page is view-only.</p>`;
+  const sign = i => fetch(`/api/blob?shared=${encodeURIComponent(t)}&url=${encodeURIComponent(r.attachments[i].url)}`).then(x => x.json()).then(x => x.url);
+  document.querySelectorAll("img[data-i]").forEach(img => sign(img.dataset.i).then(u => { if (u) img.src = u; }).catch(() => {}));
+  document.querySelectorAll("a[data-i]").forEach(a => a.onclick = async e => { e.preventDefault(); const u = await sign(a.dataset.i).catch(() => null); if (u) window.open(u, "_blank", "noopener"); });
+})();
+</script>
+</body>
+</html>

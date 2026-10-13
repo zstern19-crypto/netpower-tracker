@@ -20,6 +20,7 @@ import { handleUpload, handleUploadPresigned } from "@vercel/blob/client";
 import { issueSignedToken, presignUrl, del } from "@vercel/blob";
 import * as db from "../lib/db.js";
 import * as auth from "../lib/auth.js";
+import { sharedRfi } from "./pm.js";
 
 const SIGNED_URL_TTL = 60 * 60 * 1000; // 1 hour
 const ATTACHMENT_TOOLS = ["rfis", "submittals", "punch", "dailylog", "specs", "photos"];
@@ -74,6 +75,18 @@ export default async function handler(req, res) {
 
   try {
     if (!db.configured()) throw auth.httpError(503, "Database is not configured", "NOT_CONFIGURED");
+
+    // View-only RFI links: sign only files attached to that RFI
+    if (req.method === "GET" && req.query && req.query.shared) {
+      const rfi = await sharedRfi(req.query.shared);
+      const f = parseBlobUrl(req.query.url);
+      auth.ensure(rfi && (rfi.data.attachments || []).some(a => a.url === f.url), "Not available");
+      if (!f.isPrivate) return res.status(200).json({ ok: true, url: f.url });
+      const token = await issueSignedToken({ pathname: f.pathname, operations: ["get"], validUntil: Date.now() + SIGNED_URL_TTL, ...credentials(req) });
+      const { presignedUrl } = await presignUrl(token, { operation: "get", pathname: f.pathname, access: "private" });
+      return res.status(200).json({ ok: true, url: presignedUrl });
+    }
+
     const ctx = await auth.requireContext(req);
 
     if (req.method === "GET" && req.query && req.query.sign) {

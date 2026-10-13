@@ -103,6 +103,13 @@ function body(req) {
 
 // ── Auth actions ──
 
+// RFI shared with a view-only link: data.share = { token, by, at }
+export async function sharedRfi(token) {
+  if (!/^[A-Za-z0-9_-]{24,64}$/.test(String(token || ""))) return null;
+  const hits = await db.find(db.and([db.eq("Type", "rfi"), `FIND('"token":"${token}"',{Data})`]));
+  return hits.find(r => r.data.share && r.data.share.token === token) || null;
+}
+
 // Optional profile fields (photo is a small JPEG data URL made in the browser)
 function profileFields(b) {
   const out = {};
@@ -152,7 +159,7 @@ async function handleAction(req, res, action) {
     return res.status(200).json({ ok: true, user: auth.publicUser(ctx.user), isAdmin: ctx.isAdmin, perms: ctx.perms, tools: auth.TOOLS, levels: auth.LEVELS });
   }
 
-  if (req.method !== "POST" && !["users", "people", "notifications"].includes(action)) throw httpError(405, "Method not allowed");
+  if (req.method !== "POST" && !["users", "people", "notifications", "shared"].includes(action)) throw httpError(405, "Method not allowed");
 
   if (action === "setup") {
     ensure((await db.find(db.eq("Type", "user"))).length === 0, "Setup has already been completed — please sign in");
@@ -175,6 +182,24 @@ async function handleAction(req, res, action) {
     }
     res.setHeader("Set-Cookie", auth.sessionCookie(user));
     return res.status(200).json({ ok: true });
+  }
+
+  // View-only RFI link (no login): /pm/share.html?t=<token>
+  if (action === "shared") {
+    const rfi = await sharedRfi(req.query.t);
+    if (!rfi) throw httpError(404, "This link is no longer valid. Ask the sender for a new one.");
+    const [project, contacts, companies] = await Promise.all([db.get(rfi.projectId), db.find(db.eq("Type", "contact")), db.find(db.eq("Type", "company"))]);
+    const name = id => { const c = contacts.find(x => x.id === id); return c ? c.data.name : ""; };
+    const d = rfi.data;
+    return res.status(200).json({ ok: true, rfi: {
+      number: d.number, subject: d.subject, status: d.status, due: d.due, question: d.question || "", suggestion: d.suggestion || "",
+      manager: name(d.managerId), assignees: (d.assignees || []).map(name), receivedFrom: name(d.receivedFromId),
+      responsibleContractor: ((companies.find(c => c.id === d.responsibleCompanyId) || {}).data || {}).name || "",
+      location: d.location || "", drawing: d.drawing || "", specSection: d.specSection || "", costImpact: d.costImpact || "", scheduleImpact: d.scheduleImpact || "",
+      createdAt: d.createdAt || "", createdBy: d.createdBy || "",
+      attachments: (d.attachments || []).map(f => ({ name: f.name, size: f.size, type: f.type || "", url: f.url })),
+      responses: (d.responses || []).map(x => ({ by: x.by, at: x.at, text: x.text, official: !!x.official }))
+    }, project: project ? { name: project.data.name, number: project.data.number || "", address: [project.data.address, project.data.city, project.data.state].filter(Boolean).join(", ") } : null });
   }
 
   if (action === "logout") {

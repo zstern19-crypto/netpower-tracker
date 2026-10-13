@@ -483,3 +483,4 @@ body.auth-mode main { display: flex; justify-content: center; align-items: flex-
 .mp-chip:hover .mp-x, .mp-chip:focus-within .mp-x { display: inline-block; }
 @media (hover: none) { .mp-x { display: inline-block; } }
 .ed-remove { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.export-menu { position: absolute; width: 260px; z-index: 60; }
