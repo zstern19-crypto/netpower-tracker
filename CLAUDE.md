@@ -29,6 +29,8 @@
 ## Configuration (Vercel environment variables)
 
 - `AIRTABLE_TOKEN` — Material Tracker (`api/airtable.js`), base `appDvscikJtSDsoku`, table "Table 1".
+- `ANTHROPIC_API_KEY` — Material Tracker invoice reading (`api/claude.js`). Owner-only: requires a NetPower PM sign-in
+  (same browser) as a company admin whose email is in `CLAUDE_ALLOWED_EMAILS` (default zevy@netpowerelectric.com).
 - `PM_AIRTABLE_TOKEN`, `PM_AIRTABLE_BASE` — NetPower PM (`api/pm.js`), table "PM Records"
   (fields RecID, Type, ProjectID: single line text; Data: long text).
 - Vercel Blob store connected via OIDC (`BLOB_STORE_ID`, `BLOB_WEBHOOK_PUBLIC_KEY`); `api/blob.js`
