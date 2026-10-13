@@ -542,3 +542,31 @@ body.auth-mode main { display: flex; justify-content: center; align-items: flex-
 .jt-edit-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; } .jt-edit-row input { flex: 1; }
 .jt-states label { display: flex; align-items: center; gap: 6px; }
 .jt-job-steps tr.click { cursor: pointer; }
+
+/* Manpower chart */
+.mc-table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 14px; }
+.mc-table th, .mc-table td { border-bottom: 1px solid var(--line); border-right: 1px solid #eef0f3; padding: 6px 4px; text-align: center; }
+.mc-table thead th { position: sticky; top: 0; background: #f6f7f9; font-size: 12px; font-weight: 700; color: var(--muted); z-index: 2; line-height: 1.15; }
+.mc-table thead th small { display: block; font-weight: 500; }
+.mc-table .mc-job { text-align: left; position: sticky; left: 0; background: var(--panel); z-index: 1; min-width: 190px; padding-left: 12px; }
+.mc-table thead .mc-job { z-index: 3; background: #f6f7f9; }
+.mc-table td.mc-day { min-width: 46px; font-weight: 700; }
+.mc-table .today { background: #fff59d !important; }
+.mc-table .wk-end { border-right: 2px solid #c9ced6; }
+.mc-table .mc-week, .mc-table .mc-month { background: #fbfbfc; min-width: 56px; }
+.mc-click { cursor: pointer; position: relative; } .mc-click:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+.mc-click.open { outline: 2px solid var(--accent); outline-offset: -2px; background: #fff3ec; }
+.mc-click.typed::after { content: ""; position: absolute; top: 3px; right: 3px; width: 5px; height: 5px; border-radius: 50%; background: #1d63c9; }
+.mc-in { width: 52px; padding: 3px 4px; text-align: center; font-weight: 700; border: 1px solid transparent; background: transparent; border-radius: 4px; }
+.mc-in:hover, .mc-in:focus { border-color: var(--line); background: #fff; }
+.mc-in::placeholder { color: #a0a6ae; font-weight: 500; }
+.mc-total td, .mc-total th { font-weight: 800; background: #f6f7f9; }
+.mc-diff td { font-weight: 700; } .mc-diff td.neg { color: #b91c1c; background: #fef2f2; } .mc-diff td.pos { color: #15803d; background: #f0fdf4; }
+.mc-expand > td { text-align: left !important; background: #fffaf6; padding: 0 !important; }
+.mc-x { padding: 10px 14px; position: sticky; left: 0; max-width: calc(100vw - 280px); }
+.mc-x-head { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; } .mc-x-head .spacer { flex: 1; }
+.mc-guys { display: flex; flex-wrap: wrap; gap: 8px; }
+.mc-guy { display: flex; align-items: center; gap: 8px; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+.mc-x-foot { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 10px; }
+.mc-x-foot .mc-in { border-color: var(--line); background: #fff; }
+@media (max-width: 800px) { .mc-x { max-width: calc(100vw - 40px); } }
