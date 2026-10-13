@@ -146,7 +146,7 @@
             return `<tr><th class="mp-proj"><a href="#/p/${p.id}">${esc(p.data.name)}</a><div class="muted">${esc(p.data.number || "")}</div></th>
             ${days.map(day => { const here = deps.filter(d => d.projectId === p.id && overlaps(d, day, day));
               return `<td class="mp-cell ${day === todayS ? "today" : ""} ${[0, 6].includes(parse(day).getDay()) ? "wkend" : ""}" ${edit ? `data-drop="${p.id}" data-day="${day}"` : ""}>
-                ${here.map(d => { const u = personById(people, d.data.userId); return `<div class="mp-chip ${conflict(u.id, day) ? "conflict" : ""}" ${edit ? `draggable="true" data-dep="${d.id}"` : ""} data-open="${d.id}" title="${esc(u.name)}: ${PM.fmtDate(d.data.start)} – ${PM.fmtDate(d.data.end)}${conflict(u.id, day) ? " — double-booked!" : ""}${d.data.note ? " — " + esc(d.data.note) : ""}">${avatar(u, 22)}<span>${esc(u.name.split(" ")[0])}</span></div>`; }).join("")}
+                ${here.map(d => { const u = personById(people, d.data.userId); return `<div class="mp-chip ${conflict(u.id, day) ? "conflict" : ""}" ${edit ? `draggable="true" data-dep="${d.id}"` : ""} data-open="${d.id}" data-day="${day}" title="${esc(u.name)}: ${PM.fmtDate(d.data.start)} – ${PM.fmtDate(d.data.end)}${conflict(u.id, day) ? " — double-booked!" : ""}${d.data.note ? " — " + esc(d.data.note) : ""}">${avatar(u, 22)}<span>${esc(u.name.split(" ")[0])}</span>${edit ? `<button type="button" class="mp-x" data-rmday="${d.id}" data-day="${day}" title="Remove ${esc(u.name)} for ${dayLabel(day)} only" aria-label="Remove ${esc(u.name)} for ${dayLabel(day)}">✕</button>` : ""}</div>`; }).join("")}
                 ${edit ? `<button class="mp-add" data-add="${p.id}" data-day="${day}" title="Deploy someone here" aria-label="Deploy someone to ${esc(p.data.name)} on ${dayLabel(day)}">+</button>` : ""}</td>`; }).join("")}</tr>`; }).join("")
             || `<tr><td colspan="8" class="empty">No active projects you can staff.</td></tr>`}</tbody>
           <tfoot><tr><th class="mp-proj">Deployed</th>${days.map(day => `<td class="mp-total">${new Set(deps.filter(d => overlaps(d, day, day)).map(d => d.data.userId)).size}</td>`).join("")}</tr></tfoot></table></div>
@@ -182,7 +182,11 @@
       });
     });
     $$("[data-add]").forEach(b => b.onclick = () => assignModal(people, "", b.dataset.add, b.dataset.day));
-    $$("[data-open]").forEach(c => c.onclick = () => editDeployment(people, Store.get(c.dataset.open)));
+    $$("[data-open]").forEach(c => c.onclick = e => {
+      const x = e.target.closest("[data-rmday]");
+      if (x) { e.stopPropagation(); removeDays(Store.get(x.dataset.rmday), x.dataset.day, x.dataset.day, people); return; }
+      editDeployment(people, Store.get(c.dataset.open), c.dataset.day);
+    });
     const copy = $("#mpCopyWeek");
     if (copy) copy.onclick = () => copyLastWeek(week);
   }
@@ -251,7 +255,28 @@
     });
   }
 
-  function editDeployment(people, dep) {
+  // Take days out of an assignment (one day, or a range): trims it, splits it in two, or removes it
+  async function removeDays(dep, from, to, people, quiet) {
+    if (!dep) return false;
+    const u = personById(people || [], dep.data.userId);
+    if (to < from) [from, to] = [to, from];
+    from = from < dep.data.start ? dep.data.start : from;
+    to = to > dep.data.end ? dep.data.end : to;
+    if (from > to) { toast("Those days aren't part of this assignment", true); return false; }
+    const label = from === to ? PM.fmtDate(from) : `${PM.fmtDate(from)} – ${PM.fmtDate(to)}`;
+    if (!quiet && !window.confirm(`Remove ${u.name} from ${(Store.get(dep.projectId) || { data: { name: "this project" } }).data.name} for ${label}?`)) return false;
+    try {
+      if (from <= dep.data.start && to >= dep.data.end) await Store.remove(dep.id);
+      else if (from <= dep.data.start) await Store.save({ ...dep, data: { ...dep.data, start: addDays(to, 1) } });
+      else if (to >= dep.data.end) await Store.save({ ...dep, data: { ...dep.data, end: addDays(from, -1) } });
+      else await Store.saveMany([{ ...dep, data: { ...dep.data, end: addDays(from, -1) } }, { id: uid("dep"), type: "deploy", projectId: dep.projectId, data: { ...dep.data, start: addDays(to, 1) } }]);
+    } catch (e) { toast("Not removed: " + e.message, true); return false; }
+    toast(`${u.name} removed for ${label}`);
+    PM.render();
+    return true;
+  }
+
+  function editDeployment(people, dep, day) {
     if (!dep) return;
     const u = personById(people, dep.data.userId), editable = PM.can(dep.projectId, "manpower", "standard");
     PM.openModal({
@@ -264,8 +289,16 @@
           <div class="field"><label for="edStart">From</label><input type="date" id="edStart" value="${dep.data.start}" ${editable ? "" : "disabled"}></div>
           <div class="field"><label for="edEnd">Through</label><input type="date" id="edEnd" value="${dep.data.end}" ${editable ? "" : "disabled"}></div>
           <div class="field full"><label for="edNote">Note</label><input id="edNote" value="${esc(dep.data.note || "")}" ${editable ? "" : "disabled"}></div></div>
-        ${editable ? `<button type="button" class="btn danger small" id="edRemove">Remove from project</button>` : ""}`,
+        ${editable ? `<div class="ed-remove">
+          <div class="field"><label>Remove days</label><div class="inline-check" style="gap:6px;flex-wrap:wrap">
+            <input type="date" id="edRmFrom" value="${esc(day || dep.data.start)}" min="${dep.data.start}" max="${dep.data.end}" aria-label="Remove from"> to
+            <input type="date" id="edRmTo" value="${esc(day || dep.data.start)}" min="${dep.data.start}" max="${dep.data.end}" aria-label="Remove through">
+            <button type="button" class="btn small" id="edRmDays">Remove these days</button></div>
+            <div class="muted help">Pick one day (same date twice) or a range. The rest of the assignment stays.</div></div>
+          <button type="button" class="btn danger small" id="edRemove">Remove from project (all ${PM.fmtDate(dep.data.start)} – ${PM.fmtDate(dep.data.end)})</button></div>` : ""}`,
       onOpen: root => {
+        const rd = $("#edRmDays", root);
+        if (rd) rd.onclick = async () => { const f = $("#edRmFrom", root).value, t = $("#edRmTo", root).value; if (!f || !t) return; if (await removeDays(dep, f, t, people)) PM.closeModal(); };
         const rm = $("#edRemove", root);
         if (rm) rm.onclick = async () => {
           if (!window.confirm(`Remove ${u.name} from this project for ${PM.fmtDate(dep.data.start)} – ${PM.fmtDate(dep.data.end)}?`)) return;

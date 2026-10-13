@@ -515,6 +515,7 @@
   const ACTIONS = {};
   function bind(root) {
     applyPerms(root);
+    if (PM.forms && PM.forms.hydrateImages) PM.forms.hydrateImages(root);
     $$("[data-act]", root).forEach(el => {
       const ev = el.tagName === "SELECT" || el.tagName === "INPUT" ? (el.type === "search" ? "input" : "change") : "click";
       el.addEventListener(ev, e => {
@@ -885,6 +886,12 @@
     const rec = withHistory({ ...r, data: { ...r.data, status, ...(status === "Closed" ? { closedAt: new Date().toISOString() } : {}), ...(status === "Open" && !r.data.openedAt ? { openedAt: new Date().toISOString() } : {}) } }, `Status changed to ${status}`);
     if (await saveRec(rec, "RFI " + status.toLowerCase())) render();
   };
+  ACTIONS.rfiSetStatus = async el => {
+    const r = Store.get(el.dataset.id);
+    if (!r || el.value === r.data.status) return;
+    el.dataset.status = el.value;
+    await ACTIONS.rfiStatus(el);
+  };
   ACTIONS.rfiRespond = async el => {
     const r = Store.get(el.dataset.id);
     const box = $("#respText");
@@ -960,6 +967,8 @@
           ${d.status === "Draft" ? `<button class="btn primary" data-perm="rfis:standard" data-act="rfiStatus" data-id="${r.id}" data-status="Open">Open RFI</button>` : ""}
           ${d.status === "Open" ? `<button class="btn" data-perm="rfis:standard" data-act="rfiStatus" data-id="${r.id}" data-status="Closed">Close</button>` : ""}
           ${d.status === "Closed" ? `<button class="btn" data-perm="rfis:standard" data-act="rfiStatus" data-id="${r.id}" data-status="Open">Reopen</button>` : ""}
+          <select class="status-select" data-perm="rfis:standard" data-act="rfiSetStatus" data-id="${r.id}" aria-label="Change status" title="Change status">
+            ${RFI_STATUSES.map(st => `<option value="${st}" ${st === d.status ? "selected" : ""}>Status: ${st}</option>`).join("")}</select>
           <button class="btn" data-perm="rfis:standard" data-act="editRFI" data-id="${r.id}">Edit</button>
           <button class="btn" onclick="window.print()">Print / PDF</button>
           <button class="btn danger" data-perm="rfis:admin" data-act="deleteRecord" data-id="${r.id}" data-label="RFI" data-back="#/p/${p.id}/rfis">Delete</button>

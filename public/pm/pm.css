@@ -462,3 +462,24 @@ body.auth-mode main { display: flex; justify-content: center; align-items: flex-
 .ph-nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,.5); color: #fff; border: 0; font-size: 28px; width: 40px; height: 56px; cursor: pointer; border-radius: 6px; }
 .ph-nav.prev { left: 6px; } .ph-nav.next { right: 6px; }
 .dropzone.over { border-color: var(--accent); background: var(--accent-soft); }
+.att-imgs { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin: 6px 0 10px; }
+.att-imgs figure { margin: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #f6f7f9; }
+.att-imgs img { width: 100%; height: 150px; object-fit: cover; display: block; }
+.att-imgs figcaption { font-size: 12px; padding: 4px 6px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status-select { width: auto; }
+@media print {
+  .att-imgs { grid-template-columns: repeat(2, 1fr); }
+  .att-imgs img { height: auto; max-height: 340px; object-fit: contain; }
+  .att-imgs figure { break-inside: avoid; page-break-inside: avoid; }
+}
+.dv-selbar { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5; max-width: calc(100% - 340px); display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,.18); padding: 8px 10px; font-size: 13px; }
+.dv-sel-items { display: flex; flex-wrap: wrap; gap: 4px; max-height: 84px; overflow: auto; }
+.dv-sel-item { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 8px; border: 1px solid var(--line); border-radius: 14px; cursor: pointer; background: #fafbfc; }
+.dv-sel-item .dot { width: 9px; height: 9px; border-radius: 50%; }
+.dv-sel-item button { border: 0; background: none; cursor: pointer; color: #b42318; font-size: 12px; padding: 0 4px; }
+@media (max-width: 900px) { .dv-selbar { max-width: calc(100% - 20px); } }
+.mp-chip { position: relative; }
+.mp-x { display: none; border: 0; background: #e5322d; color: #fff; border-radius: 50%; width: 16px; height: 16px; font-size: 10px; line-height: 16px; padding: 0; margin-left: auto; cursor: pointer; flex: none; }
+.mp-chip:hover .mp-x, .mp-chip:focus-within .mp-x { display: inline-block; }
+@media (hover: none) { .mp-x { display: inline-block; } }
+.ed-remove { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }

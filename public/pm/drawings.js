@@ -803,6 +803,7 @@
             <div class="dv-msg" id="dvMsg">Loading sheet…</div>
           </div>
           <div class="dv-hint" id="dvHint" aria-live="polite"></div>
+          <div class="dv-selbar" id="dvSelBar" hidden></div>
           <aside class="dv-side" id="dvSide"></aside>
         </div>
       </div>`;
@@ -1174,9 +1175,44 @@
       if ($("#dvUndo")) $("#dvUndo").disabled = !V.undo.length;
       if ($("#dvEditText")) $("#dvEditText").hidden = !(mineSel && sel && sel.t === "text");
       if ($("#dvToRfi")) $("#dvToRfi").hidden = !mySelected().some(x => x.t !== "pin");
+      drawSelBar();
       const sc = curScale();
       if ($("#dvScale")) $("#dvScale").textContent = "Scale: " + (sc ? sc.label : "not set");
     }
+
+    // Several markups selected (lasso): list them, each with its own delete, plus "Delete all"
+    const KIND = { pen: "Pen", highlight: "Highlight", line: "Line", arrow: "Arrow", rect: "Box", cloud: "Cloud", text: "Text", measure: "Measurement", area: "Area", pin: "Pin" };
+    function drawSelBar() {
+      const bar = $("#dvSelBar");
+      if (!bar) return;
+      const sel = mySelected();
+      if (sel.length < 2) { bar.hidden = true; bar.innerHTML = ""; return; }
+      bar.hidden = false;
+      bar.innerHTML = `<strong>${sel.length} selected</strong>
+        <span class="dv-sel-items">${sel.map(x => `<span class="dv-sel-item" data-selone="${x.id}"><span class="dot" style="background:${esc(x.color || "#888")}"></span>${esc(KIND[x.t] || x.t)}${x.t === "text" && x.text ? " “" + esc(String(x.text).slice(0, 18)) + "”" : ""}<button type="button" data-seldel="${x.id}" title="Delete this one" aria-label="Delete this ${esc(KIND[x.t] || "markup")}">✕</button></span>`).join("")}</span>
+        <button type="button" class="btn small danger" data-seldelall>Delete all (${sel.length})</button>
+        ${$("#dvToRfi") && sel.some(x => x.t !== "pin") ? `<button type="button" class="btn small" data-seltorfi>Move to RFI</button>` : ""}
+        <button type="button" class="btn small" data-selclear>Clear</button>`;
+    }
+    $("#dvSelBar") && $("#dvSelBar").addEventListener("click", e => {
+      const one = e.target.closest("[data-seldel]");
+      if (one) {
+        pushUndo();
+        V.mine = V.mine.filter(x => x.id !== one.dataset.seldel);
+        V.sel.delete(one.dataset.seldel);
+        changed();
+        return;
+      }
+      if (e.target.closest("[data-seldelall]")) {
+        const n = mySelected().length;
+        if (window.confirm(`Delete all ${n} selected markups?`)) { deleteSelected(); toast(`${n} markups deleted (Undo brings them back)`); }
+        return;
+      }
+      if (e.target.closest("[data-seltorfi]")) { moveToRfiModal(); return; }
+      if (e.target.closest("[data-selclear]")) { select([]); draw(); return; }
+      const pick = e.target.closest("[data-selone]");
+      if (pick) { select(pick.dataset.selone); draw(); }
+    });
 
     function syncCursor() {
       const c = V.pan ? "grabbing" : V.space ? "grab" : V.tool === "pan" ? "grab" : "crosshair";

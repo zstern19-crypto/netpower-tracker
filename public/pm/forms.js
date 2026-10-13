@@ -191,8 +191,22 @@
   }
   const readAttach = root => { const h = $("[data-attach-value]", root); return h ? JSON.parse(h.value || "[]").filter(f => f.url && !f.uploading) : []; };
   const uploadsBusy = root => { const h = $("[data-attach-value]", root); return h && JSON.parse(h.value || "[]").some(f => f.uploading); };
+  // Photos show as pictures (on screen and when printed); other files as links
+  const isImage = f => /^image\//.test(f.type || "") || /\.(jpe?g|png|gif|webp|bmp)$/i.test(f.name || "");
   function attachmentsView(files) {
-    return (files || []).length ? `<ul class="attach-list">${files.map(f => `<li><a href="#" data-dl="${esc(f.url)}" data-name="${esc(f.name)}">📎 ${esc(f.name)}</a> <span class="muted">${fmtSize(f.size || 0)}</span></li>`).join("")}</ul>` : `<span class="muted">None</span>`;
+    files = files || [];
+    if (!files.length) return `<span class="muted">None</span>`;
+    const imgs = files.filter(isImage), docs = files.filter(f => !isImage(f));
+    return `${imgs.length ? `<div class="att-imgs">${imgs.map(f => `<figure><a href="#" data-dl="${esc(f.url)}" data-name="${esc(f.name)}"><img data-att-img="${esc(f.url)}" alt="${esc(f.name)}"></a><figcaption>${esc(f.name)}</figcaption></figure>`).join("")}</div>` : ""}
+      ${docs.length ? `<ul class="attach-list">${docs.map(f => `<li><a href="#" data-dl="${esc(f.url)}" data-name="${esc(f.name)}">📎 ${esc(f.name)}</a> <span class="muted">${fmtSize(f.size || 0)}</span></li>`).join("")}</ul>` : ""}`;
+  }
+  // Load attachment pictures (private files need short-lived signed links)
+  function hydrateImages(root) {
+    $$("img[data-att-img]", root || document).forEach(img => {
+      const url = img.dataset.attImg;
+      img.removeAttribute("data-att-img");
+      PM.files.fileObjectUrl(url).then(u => { img.src = u; }).catch(() => { img.alt = "Photo unavailable"; });
+    });
   }
 
   // ───────────────────────── Pickers ─────────────────────────
@@ -741,6 +755,6 @@
   }
   const subTabs = (p, on) => `<div class="tabs sub-tabs"><a href="#/p/${p.id}/submittals" class="${on === "items" ? "on" : ""}">Items</a><a href="#/p/${p.id}/submittals/packages" class="${on === "packages" ? "on" : ""}">Packages</a></div>`;
 
-  PM.forms = { rfiPage, rfiModal, submittalPage, specsPage, sanitizeHTML, richHTML, attachmentsView, specLabel, micBtn,
+  PM.forms = { hydrateImages, isImage, rfiPage, rfiModal, submittalPage, specsPage, sanitizeHTML, richHTML, attachmentsView, specLabel, micBtn,
     packagesPage, packageDetail, packageName, packagesOf, subTabs, editPackage };
 })();
