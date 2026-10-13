@@ -570,3 +570,14 @@ body.auth-mode main { display: flex; justify-content: center; align-items: flex-
 .mc-x-foot { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 10px; }
 .mc-x-foot .mc-in { border-color: var(--line); background: #fff; }
 @media (max-width: 800px) { .mc-x { max-width: calc(100vw - 40px); } }
+
+/* Assistant attachments */
+.ai-files { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 10px; }
+.ai-files:empty { display: none; }
+.ai-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; background: #f1f3f6; border: 1px solid var(--line); border-radius: 12px; padding: 2px 8px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-chip.err { background: #fef2f2; border-color: #fca5a5; color: #b91c1c; }
+.ai-chip button { border: 0; background: none; cursor: pointer; padding: 0 2px; color: inherit; }
+.ai-msg-files { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.ai-clip { cursor: pointer; padding-left: 10px; padding-right: 10px; }
+.ai-panel.drop { outline: 3px dashed var(--accent); outline-offset: -6px; }
+.ai-actions .btn { margin: 4px 0; }
