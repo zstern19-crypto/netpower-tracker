@@ -482,7 +482,7 @@
             },
             team: () => projectTeam(p),
             photos: () => PM.photos ? PM.photos.page(p, query) : `<div class="empty">Photos module failed to load.</div>`,
-            drawings: () => PM.drawings ? (sub ? PM.drawings.viewer(p, sub, query) : PM.drawings.log(p)) : `<div class="empty">Drawings module failed to load.</div>`
+            drawings: () => PM.drawings ? (sub === "review" ? PM.drawings.review(p, parts[4]) : sub ? PM.drawings.viewer(p, sub, query) : PM.drawings.log(p)) : `<div class="empty">Drawings module failed to load.</div>`
           }[current.tool] || (() => `<div class="empty">Unknown tool.</div>`);
         }
       } else if (parts[0] === "admin" && PM.auth) {

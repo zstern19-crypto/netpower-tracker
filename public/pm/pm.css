@@ -484,3 +484,12 @@ body.auth-mode main { display: flex; justify-content: center; align-items: flex-
 @media (hover: none) { .mp-x { display: inline-block; } }
 .ed-remove { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .export-menu { position: absolute; width: 260px; z-index: 60; }
+.review-banner { border: 1px solid #f0c36d; background: #fffaf0; }
+.rv-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 4px 0; }
+.rv-table input, .rv-table select { min-width: 0; }
+.cmp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.cmp-grid.one { grid-template-columns: 1fr; }
+.cmp-grid figure, #cmpOv { margin: 0; }
+.cmp-grid canvas, #cmpOv canvas { width: 100%; height: auto; border: 1px solid var(--line); display: block; }
+.cmp-grid figcaption { font-weight: 600; margin-bottom: 4px; }
+@media (max-width: 900px) { .cmp-grid { grid-template-columns: 1fr; } }

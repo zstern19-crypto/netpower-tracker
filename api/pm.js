@@ -75,6 +75,9 @@ export async function checkWrite(ctx, rec, stored) {
       continue;
     }
     ensure(ctx.can(pid, TYPE_TOOL[t], t === "logsetting" ? "admin" : "standard"));
+    // Only drawing admins may publish or edit an upload that's waiting for review
+    if (t === "drawset" && stored && stored.data.status === "pending") ensure(ctx.can(pid, "drawings", "admin"), "Only drawing admins can review uploads");
+    if (t === "drawset" && !stored && rec.data.status !== "pending") ensure(ctx.can(pid, "drawings", "admin"), "New drawing uploads must go through review");
     if (t === "jphoto" && r === stored && !ctx.can(pid, "photos", "admin")) ensure(stored.data.byUserId === ctx.user.id, "You can only edit your own photos");
     if (t === "markup" && !ctx.can(pid, "drawings", "admin")) ensure(r.data.ownerId === ctx.contactId, "You can only change your own markups");
   }
@@ -325,6 +328,8 @@ export default async function handler(req, res) {
       await checkRead(ctx, type, project);
       let records = await db.find(db.and([db.eq("Type", type), ...(project ? [db.eq("ProjectID", project)] : [])]));
       if (type === "project" && !ctx.isAdmin) records = records.filter(r => ctx.isMember(r.id));
+      // Drawing uploads waiting for review are only visible to drawing admins
+      if (type === "drawset") records = records.filter(r => r.data.status !== "pending" || ctx.can(r.projectId, "drawings", "admin"));
       if (type === "cert" && !ctx.isAdmin) records = records.filter(r => r.data.userId === ctx.user.id);
       if (type === "deploy" && !project) records = records.filter(r => ctx.can(r.projectId, "manpower", "read"));
       records = records.filter(r => r.id && canSeePrivate(ctx, r));

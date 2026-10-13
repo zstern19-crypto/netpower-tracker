@@ -414,42 +414,193 @@
       const status = $("#dsStatus", root);
       const now = new Date().toISOString();
       const records = [];
-      const touched = {};
+      // New uploads are held in a pending set until a drawings admin reviews and publishes them
       for (const fi of [...new Set(rows.map(r => r.fi))]) {
         const f = files[fi];
         status.textContent = `Uploading ${f.file.name}…`;
         const fileUrl = await storeFile(p.id, f.file, pct => { status.textContent = `Uploading ${f.file.name}… ${Math.round(pct)}%`; });
-        const set = { id: uid("dset"), type: "drawset", projectId: p.id, data: { name: setName, drawingDate, receivedDate, fileName: f.file.name, fileUrl, size: f.file.size, pages: f.pages.length, sheets: rows.filter(r => r.fi === fi).length, uploadedBy: PM.meName(), at: now } };
-        records.push(set);
-        for (const r of rows.filter(x => x.fi === fi)) {
-          const rev = { id: uid("rv"), rev: r.rev, setId: set.id, setName, fileUrl, page: r.pg.page, width: r.pg.width, height: r.pg.height, drawingDate, receivedDate, uploadedBy: PM.meName(), at: now };
-          const existing = touched[r.number] || findByNumber(p, r.number);
-          if (existing) {
-            const g = { ...existing, data: { ...existing.data, revisions: [...(existing.data.revisions || []), rev] } };
-            const cur = currentRev(existing);
-            const curDate = cur ? (cur.drawingDate || (cur.at || "").slice(0, 10)) : "";
-            if (!cur || (drawingDate || now.slice(0, 10)) >= curDate) {
-              g.data.current = rev.id;
-              g.data.thumb = r.pg.thumb;
-              if (r.title) g.data.title = r.title;
-              g.data.discipline = r.discipline;
-            }
-            PM.withHistory(g, `Rev ${r.rev} uploaded (${setName})${g.data.current === rev.id ? "" : " — older than current, not made current"}`);
-            touched[r.number] = g;
-          } else {
-            const g = { id: uid("dwg"), type: "drawing", projectId: p.id, data: { number: r.number, title: r.title, discipline: r.discipline, current: rev.id, thumb: r.pg.thumb, revisions: [rev], createdAt: now, createdBy: PM.meName() } };
-            PM.withHistory(g, `Uploaded as Rev ${r.rev} (${setName})`);
-            touched[r.number] = g;
-          }
-        }
+        const mine = rows.filter(r => r.fi === fi);
+        records.push({ id: uid("dset"), type: "drawset", projectId: p.id, data: {
+          name: setName, drawingDate, receivedDate, fileName: f.file.name, fileUrl, size: f.file.size, pages: f.pages.length, sheets: mine.length,
+          uploadedBy: PM.meName(), at: now, status: "pending",
+          pendingSheets: mine.map(r => ({ number: r.number, title: r.title, discipline: r.discipline, rev: r.rev, page: r.pg.page, width: r.pg.width, height: r.pg.height, include: true }))
+        } });
       }
-      records.push(...Object.values(touched));
-      status.textContent = "Saving drawing log…";
-      await Store.saveMany(records, (n, total) => { status.textContent = `Saving drawing log… ${n}/${total}`; });
-      toast(`${rows.length} sheet${rows.length === 1 ? "" : "s"} uploaded`);
-      setTimeout(PM.render, 0);
+      status.textContent = "Saving…";
+      await Store.saveMany(records);
+      toast(PM.can(p.id, "drawings", "admin")
+        ? `${rows.length} sheet${rows.length === 1 ? "" : "s"} uploaded — review and publish them`
+        : `${rows.length} sheet${rows.length === 1 ? "" : "s"} uploaded and sent for review — a drawings admin will publish them`);
+      setTimeout(() => { if (records.length === 1 && PM.can(p.id, "drawings", "admin")) location.hash = `#/p/${p.id}/drawings/review/${records[0].id}`; else PM.render(); }, 0);
       return true;
     }
+  }
+
+  // ───────────────────────── Review & publish ─────────────────────────
+  const pendingSets = p => Store.all("drawset", p.id).filter(s => s.data.status === "pending").sort((a, b) => (a.data.at || "").localeCompare(b.data.at || ""));
+
+  // Add a reviewed set's sheets to the drawing log (new sheets, or new revisions of existing ones)
+  async function publishSet(p, set, sheets, onStatus) {
+    const now = new Date().toISOString();
+    const d = set.data, touched = {};
+    const doc = await openPdf(d.fileUrl);
+    let i = 0;
+    for (const r of sheets) {
+      onStatus && onStatus(`Publishing ${++i}/${sheets.length}…`);
+      const thumb = await renderThumb(await doc.getPage(r.page), 220).catch(() => "");
+      const rev = { id: uid("rv"), rev: r.rev, setId: set.id, setName: d.name, fileUrl: d.fileUrl, page: r.page, width: r.width, height: r.height, drawingDate: d.drawingDate, receivedDate: d.receivedDate, uploadedBy: d.uploadedBy, at: d.at, publishedBy: PM.meName(), publishedAt: now };
+      const existing = touched[r.number] || findByNumber(p, r.number);
+      if (existing) {
+        const g = { ...existing, data: { ...existing.data, revisions: [...(existing.data.revisions || []), rev] } };
+        const cur = currentRev(existing);
+        const curDate = cur ? (cur.drawingDate || (cur.at || "").slice(0, 10)) : "";
+        if (!cur || (d.drawingDate || now.slice(0, 10)) >= curDate) {
+          g.data.current = rev.id;
+          g.data.thumb = thumb;
+          if (r.title) g.data.title = r.title;
+          g.data.discipline = r.discipline;
+        }
+        PM.withHistory(g, `Rev ${r.rev} published (${d.name})${g.data.current === rev.id ? "" : " — older than current, not made current"}`);
+        touched[r.number] = g;
+      } else {
+        const g = { id: uid("dwg"), type: "drawing", projectId: p.id, data: { number: r.number, title: r.title, discipline: r.discipline, current: rev.id, thumb, revisions: [rev], createdAt: now, createdBy: d.uploadedBy || PM.meName() } };
+        PM.withHistory(g, `Published as Rev ${r.rev} (${d.name})`);
+        touched[r.number] = g;
+      }
+    }
+    const { pendingSheets, ...rest } = d;
+    const rejected = (pendingSheets || []).length - sheets.length;
+    const setRec = { ...set, data: { ...rest, status: "published", sheets: sheets.length, publishedBy: PM.meName(), publishedAt: now, ...(rejected > 0 ? { rejectedSheets: rejected } : {}) } };
+    onStatus && onStatus("Saving drawing log…");
+    await Store.saveMany([...Object.values(touched), setRec]);
+  }
+
+  function review(p, setId) {
+    const set = Store.get(setId);
+    if (!set || set.type !== "drawset") return `<div class="empty">Drawing set not found. <a href="#/p/${p.id}/drawings">Back to drawings</a></div>`;
+    if (set.data.status !== "pending") return `<div class="empty">“${esc(set.data.name)}” has already been ${set.data.status === "published" ? "published" : "handled"}. <a href="#/p/${p.id}/drawings">Back to drawings</a></div>`;
+    if (!PM.can(p.id, "drawings", "admin")) return `<div class="empty">Only drawing admins can review uploads.</div>`;
+    const d = set.data, sheets = d.pendingSheets || [];
+    const discs = [...new Set([...DISCIPLINES, ...sheets.map(x => x.discipline)].filter(Boolean))];
+    const status = sh => {
+      const g = findByNumber(p, sh.number), cur = g && currentRev(g);
+      return g ? `<span class="pill revise-and-resubmit">New revision</span> <span class="muted">of ${esc(g.data.number)} (current Rev ${esc(cur ? cur.rev : "?")})</span>` : `<span class="pill open">New sheet</span>`;
+    };
+    setTimeout(() => wireReview(p, set), 0);
+    return `
+      <div class="crumb"><a href="#/p/${p.id}/drawings">Drawings</a> / Review</div>
+      <div class="page-head"><h1>Review: ${esc(d.name)}</h1>
+        <div class="actions"><button class="btn danger" id="rvReject">Reject set</button><button class="btn" id="rvSave">Save changes</button><button class="btn primary" id="rvPublish">Publish selected sheets</button></div></div>
+      <p class="muted" style="margin-top:0">${esc(d.fileName)} · ${sheets.length} sheet${sheets.length === 1 ? "" : "s"} · uploaded by ${esc(d.uploadedBy || "")} ${PM.fmtDate(d.at)}${d.drawingDate ? " · drawing date " + PM.fmtDate(d.drawingDate) : ""}.
+        Nobody else sees these sheets until you publish. Fix sheet numbers, titles or revisions, untick sheets you don't want, and use <strong>Compare</strong> to check revisions against what's in the field now.</p>
+      <div class="panel flush"><div class="table-wrap"><table class="list rv-table"><thead><tr><th>Publish</th><th>Page</th><th>Sheet #</th><th>Title</th><th>Discipline</th><th>Rev</th><th>What it is</th><th></th></tr></thead><tbody>
+        ${sheets.map((sh, i) => `<tr data-rv="${i}">
+          <td><input type="checkbox" data-k="include" ${sh.include !== false ? "checked" : ""} aria-label="Publish sheet ${esc(sh.number)}"></td>
+          <td>${sh.page}</td>
+          <td><input data-k="number" value="${esc(sh.number)}" style="width:110px"></td>
+          <td><input data-k="title" value="${esc(sh.title || "")}"></td>
+          <td><select data-k="discipline">${discs.map(x => `<option ${x === sh.discipline ? "selected" : ""}>${esc(x)}</option>`).join("")}</select></td>
+          <td><input data-k="rev" value="${esc(sh.rev)}" style="width:60px"></td>
+          <td class="rv-status">${status(sh)}</td>
+          <td class="nowrap"><button class="btn small" data-cmp="${i}">${findByNumber(p, sh.number) ? "Compare" : "View"}</button></td></tr>`).join("")}
+      </tbody></table></div></div>
+      <div class="panel" id="rvCmp" hidden></div>`;
+  }
+
+  function readReview(root, set) {
+    return (set.data.pendingSheets || []).map((sh, i) => {
+      const tr = $(`[data-rv="${i}"]`, root);
+      return { ...sh, include: $("[data-k=include]", tr).checked, number: $("[data-k=number]", tr).value.trim().toUpperCase(), title: $("[data-k=title]", tr).value.trim(), discipline: $("[data-k=discipline]", tr).value, rev: $("[data-k=rev]", tr).value.trim() || "0" };
+    });
+  }
+
+  function wireReview(p, set) {
+    const root = $("#main");
+    if (!$("#rvPublish")) return;
+    const saveEdits = async () => { const sheets = readReview(root, set); await Store.save({ ...set, data: { ...set.data, pendingSheets: sheets } }); return sheets; };
+    root.addEventListener("change", e => {
+      const tr = e.target.closest("[data-rv]");
+      if (tr && e.target.dataset.k === "number") {
+        const g = findByNumber(p, e.target.value.trim());
+        $(".rv-status", tr).innerHTML = g ? `<span class="pill revise-and-resubmit">New revision</span> <span class="muted">of ${esc(g.data.number)} (current Rev ${esc((currentRev(g) || {}).rev || "?")})</span>` : `<span class="pill open">New sheet</span>`;
+        $("[data-cmp]", tr).textContent = g ? "Compare" : "View";
+      }
+    });
+    $("#rvSave").onclick = async () => { try { await saveEdits(); toast("Changes saved — still waiting to be published"); } catch (e) { toast(e.message, true); } };
+    $("#rvPublish").onclick = async () => {
+      const all = readReview(root, set), chosen = all.filter(x => x.include);
+      if (!chosen.length) { toast("Tick at least one sheet, or use Reject set", true); return; }
+      const missing = chosen.filter(x => !x.number);
+      if (missing.length) { toast(`${missing.length} sheet(s) need a sheet number`, true); return; }
+      const seen = new Set();
+      for (const x of chosen) { if (seen.has(x.number)) { toast("Duplicate sheet number: " + x.number, true); return; } seen.add(x.number); }
+      if (!window.confirm(`Publish ${chosen.length} sheet${chosen.length > 1 ? "s" : ""} to the drawing log? Everyone on the project will see ${chosen.length > 1 ? "them" : "it"}.${all.length > chosen.length ? `\n${all.length - chosen.length} unticked sheet(s) will be dropped.` : ""}`)) return;
+      const btn = $("#rvPublish"); btn.disabled = true;
+      try { await publishSet(p, Store.get(set.id) || set, chosen, msg => { btn.textContent = msg; }); }
+      catch (e) { btn.disabled = false; btn.textContent = "Publish selected sheets"; toast("Publish failed: " + e.message, true); return; }
+      toast(`${chosen.length} sheet${chosen.length > 1 ? "s" : ""} published`);
+      location.hash = `#/p/${p.id}/drawings`;
+    };
+    $("#rvReject").onclick = async () => {
+      if (!window.confirm(`Reject “${set.data.name}”? The upload and its PDF are deleted and nothing is added to the drawing log.`)) return;
+      try { await Store.remove(set.id); await deleteFiles([set.data.fileUrl]); } catch (e) { toast("Reject failed: " + e.message, true); return; }
+      toast("Set rejected");
+      location.hash = `#/p/${p.id}/drawings`;
+    };
+    $$("[data-cmp]", root).forEach(b => b.onclick = () => compare(p, set, readReview(root, set)[Number(b.dataset.cmp)]));
+  }
+
+  // Side-by-side and overlay of the current revision vs the uploaded page
+  async function compare(p, set, sh) {
+    const box = $("#rvCmp");
+    box.hidden = false;
+    const g = findByNumber(p, sh.number), cur = g && currentRev(g);
+    box.innerHTML = `<div class="section-head"><h2 style="margin:0">${esc(sh.number)} ${esc(sh.title || "")} ${cur ? `— Rev ${esc(cur.rev)} (current) vs Rev ${esc(sh.rev)} (uploaded)` : "— new sheet"}</h2>
+        <span>${cur ? `<label class="inline-check"><input type="checkbox" id="cmpOverlay"> Overlay</label>` : ""} <button class="btn small" id="cmpClose">Close</button></span></div>
+      ${cur ? `<p class="muted" id="cmpLegend" hidden>Overlay: <span style="color:#d42020;font-weight:700">red = only in the current drawing (removed)</span>, <span style="color:#1f9d55;font-weight:700">green = only in the upload (added)</span>, gray = unchanged.</p>` : ""}
+      <div class="cmp-grid ${cur ? "" : "one"}" id="cmpGrid">${cur ? `<figure><figcaption>Current — Rev ${esc(cur.rev)}</figcaption><canvas id="cmpA"></canvas></figure>` : ""}<figure><figcaption>Uploaded — Rev ${esc(sh.rev)}</figcaption><canvas id="cmpB"></canvas></figure></div>
+      <figure id="cmpOv" hidden><canvas id="cmpC"></canvas></figure><p class="muted" id="cmpMsg">Rendering…</p>`;
+    box.scrollIntoView({ behavior: "smooth", block: "start" });
+    $("#cmpClose").onclick = () => { box.hidden = true; box.innerHTML = ""; };
+    const W = Math.min(1600, Math.max(900, box.clientWidth * (window.devicePixelRatio || 1)));
+    const render = async (fileUrl, pageNo, canvas, width) => {
+      const page = await (await openPdf(fileUrl)).getPage(pageNo);
+      const vp1 = page.getViewport({ scale: 1 }), vp = page.getViewport({ scale: width / vp1.width });
+      canvas.width = Math.ceil(vp.width); canvas.height = Math.ceil(vp.height);
+      const ctx = canvas.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      return canvas;
+    };
+    // Render both pages; the overlay waits for them (the checkbox can be ticked any time)
+    const ready = (async () => {
+      const b = await render(set.data.fileUrl, sh.page, $("#cmpB"), W);
+      const a = cur ? await render(cur.fileUrl, cur.page, $("#cmpA"), W) : null;
+      return { a, b };
+    })();
+    const ov = $("#cmpOverlay");
+    if (ov) ov.onchange = async () => {
+      $("#cmpGrid").hidden = ov.checked; $("#cmpOv").hidden = !ov.checked; $("#cmpLegend").hidden = !ov.checked;
+      const c = $("#cmpC");
+      if (!ov.checked || c.dataset.drawn) return;
+      const { a, b } = await ready.catch(() => ({}));
+      if (!a || !b) return;
+      const w = b.width, h = Math.max(a.height, b.height);
+      c.width = w; c.height = h;
+      const ctx = c.getContext("2d");
+      const da = a.getContext("2d").getImageData(0, 0, w, h).data, db = b.getContext("2d").getImageData(0, 0, w, h).data;
+      const out = ctx.createImageData(w, h), o = out.data;
+      for (let i = 0; i < o.length; i += 4) {
+        const inA = da[i + 3] > 0 && (da[i] + da[i + 1] + da[i + 2]) / 3 < 160, inB = db[i + 3] > 0 && (db[i] + db[i + 1] + db[i + 2]) / 3 < 160;
+        const [r, g2, bl] = inA && inB ? [150, 150, 150] : inA ? [212, 32, 32] : inB ? [31, 157, 85] : [255, 255, 255];
+        o[i] = r; o[i + 1] = g2; o[i + 2] = bl; o[i + 3] = 255;
+      }
+      ctx.putImageData(out, 0, 0);
+      c.dataset.drawn = "1";
+    };
+    try {
+      await ready;
+      $("#cmpMsg").textContent = cur ? "Tip: tick Overlay to see exactly what changed." : "";
+    } catch (e) { $("#cmpMsg").textContent = "Couldn't render: " + e.message; }
   }
 
   // ───────────────────────── Deleting ─────────────────────────
@@ -562,6 +713,8 @@
     return `
       <div class="page-head"><h1>Drawings</h1><span class="sub">${all.length} sheet${all.length === 1 ? "" : "s"}</span>
         <div class="actions"><button class="btn primary" id="dwgUpload" data-perm="drawings:standard">+ Upload Drawings</button></div></div>
+      ${(() => { const pend = PM.can(p.id, "drawings", "admin") ? pendingSets(p) : []; return pend.length ? `<div class="panel review-banner"><h2 style="margin:0 0 6px">⚠ ${pend.length} upload${pend.length > 1 ? "s" : ""} waiting for your review</h2>
+        ${pend.map(s => `<div class="rv-row"><strong>${esc(s.data.name)}</strong> <span class="muted">${esc(s.data.fileName)} · ${(s.data.pendingSheets || []).length} sheets · ${esc(s.data.uploadedBy || "")} ${PM.fmtDate(s.data.at)}</span> <a class="btn small primary" href="#/p/${p.id}/drawings/review/${s.id}">Review</a></div>`).join("")}</div>` : ""; })()}
       <div class="panel flush">
         <div class="toolbar">
           <input type="search" id="dwgSearch" placeholder="Search sheet # or title…" value="${esc(logFilter.q)}">
@@ -574,7 +727,7 @@
       </div>
       <div class="panel"><h2>Drawing Sets</h2>
         ${sets.length ? `<div class="table-wrap"><table class="list"><thead><tr><th>Set</th><th>File</th><th>Sheets</th><th>Drawing Date</th><th>Uploaded</th><th></th></tr></thead><tbody>
-          ${sets.map(s => `<tr><td><strong>${esc(s.data.name)}</strong></td><td>${esc(s.data.fileName)}</td><td>${s.data.sheets}</td><td class="nowrap">${PM.fmtDate(s.data.drawingDate)}</td>
+          ${sets.map(s => `<tr><td><strong>${esc(s.data.name)}</strong>${s.data.status === "pending" ? ` ${PM.pill("Pending review")}` : ""}</td><td>${esc(s.data.fileName)}</td><td>${s.data.sheets}</td><td class="nowrap">${PM.fmtDate(s.data.drawingDate)}</td>
             <td class="nowrap">${PM.fmtDate(s.data.at)} · ${esc(s.data.uploadedBy || "")}</td>
             <td class="nowrap"><button class="btn small" data-dl="${esc(s.data.fileUrl)}" data-name="${esc(s.data.fileName)}">Download PDF</button>
               <button class="btn small danger" data-perm="drawings:admin" data-delset="${s.id}">Delete set</button></td></tr>`).join("")}
@@ -1845,6 +1998,6 @@
     }
   }
 
-  PM.drawings = { log, viewer, linksPanel, rfiMarkupsPanel, detectSheet, disciplineFor, sheetsOf, currentRev };
+  PM.drawings = { review, pendingSets, log, viewer, linksPanel, rfiMarkupsPanel, detectSheet, disciplineFor, sheetsOf, currentRev };
   PM.files = { upload: uploadFile, readableUrl, fileObjectUrl, deleteFiles };
 })();
