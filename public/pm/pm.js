@@ -361,6 +361,7 @@
     badge.title = "Airtable is not configured. Data is saved only in this browser.";
     if (PM.people) PM.people.decorateTopbar();
     if (PM.tools) PM.tools.decorateTopbar();
+    if (PM.assistant) PM.assistant.decorateTopbar();
     $$(".topnav a").forEach(a => a.classList.toggle("on", a.dataset.nav === current.nav));
   }
 

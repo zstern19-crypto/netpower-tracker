@@ -19,7 +19,7 @@ const fail = msg => { const e = new Error(msg); e.userFacing = true; throw e; };
 
 // ── Tool definitions ──
 const projectArg = { type: "string", description: "Project name, project number, or id (partial names are fine)" };
-const TOOLS = [
+export const TOOLS = [
   { name: "list_projects", description: "List the NetPower projects you can access (name, number, status).", inputSchema: { type: "object", properties: {} } },
   { name: "list_people", description: "List the people on a project's team — use their names for RFI assignees or punch item assignees.", inputSchema: { type: "object", properties: { project: projectArg }, required: ["project"] } },
   { name: "list_rfis", description: "List RFIs on a project, newest first.", inputSchema: { type: "object", properties: { project: projectArg, status: { type: "string", enum: ["Draft", "Open", "Closed"], description: "Only this status" } }, required: ["project"] } },
@@ -76,7 +76,7 @@ async function recordsOf(ctx, type, p) {
 const contactName = (contacts, id) => (contacts.find(c => c.id === id) || { data: { name: "" } }).data.name;
 
 // ── Tool implementations ──
-async function callTool(ctx, req, name, a) {
+export async function callTool(ctx, req, name, a) {
   a = a || {};
   switch (name) {
     case "list_projects": {
