@@ -409,7 +409,8 @@
       const adminLinks = isCompanyAdmin() && Store.mode !== "local" ? `
         <div class="grp">Admin</div>
         <a href="#/admin/users" class="${location.hash.startsWith("#/admin/users") ? "on" : ""}">Users</a>
-        <a href="#/admin/templates" class="${location.hash.startsWith("#/admin/templates") ? "on" : ""}">Permission Templates</a>` : "";
+        <a href="#/admin/templates" class="${location.hash.startsWith("#/admin/templates") ? "on" : ""}">Permission Templates</a>
+        <a href="#/admin/company" class="${location.hash.startsWith("#/admin/company") ? "on" : ""}">Company Letterhead</a>` : "";
       sb.innerHTML = `
         <div class="grp">Company</div>
         <a href="#/" class="${current.nav === "portfolio" ? "on" : ""}">Portfolio</a>
@@ -1135,7 +1136,7 @@
     };
     return `
       <div class="page-head"><h1>Submittals</h1>
-        <div class="actions"><button class="btn" data-act="exportSubmittals" data-project="${p.id}">Export CSV</button><button class="btn primary" data-perm="submittals:standard" data-act="newSubmittal" data-project="${p.id}">+ Create Submittal</button></div></div>
+        <div class="actions"><button class="btn" id="subListExportBtn" data-act="subExportList" data-project="${p.id}" aria-haspopup="true">Export ▾</button><button class="btn primary" data-perm="submittals:standard" data-act="newSubmittal" data-project="${p.id}">+ Create Submittal</button></div></div>
       ${PM.forms.subTabs(p, "items")}
       <div class="panel flush">${toolbarHTML(key, SUB_STATUSES, (() => { const trades = [...new Set(PM.forms.packagesOf(p).map(k => k.data.trade).filter(Boolean))].sort(); const f = getFilter(key); return trades.length ? `<select name="trade" data-act="filter" data-key="${key}" aria-label="Trade"><option value="">All trades</option>${trades.map(t => `<option ${f.trade === t ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>` : ""; })())}
         <div class="table-wrap"><table class="list"><thead><tr><th>Spec Section</th><th>#</th><th>Title</th><th>Package</th><th>Type</th><th>Status</th><th>Ball In Court</th><th>Responsible</th><th>Due</th></tr></thead>
@@ -1174,7 +1175,7 @@
           ${d.status !== "Closed" && d.status !== "Draft" ? `<button class="btn" data-perm="submittals:standard" data-act="subStatus" data-id="${s.id}" data-status="Closed">Close</button>` : ""}
           ${d.status === "Closed" ? `<button class="btn" data-perm="submittals:standard" data-act="subStatus" data-id="${s.id}" data-status="Open">Reopen</button>` : ""}
           <button class="btn" data-perm="submittals:standard" data-act="editSubmittal" data-id="${s.id}">Edit</button>
-          <button class="btn" onclick="window.print()">Print / PDF</button>
+          <button class="btn" id="subExportBtn" data-act="subExport" data-id="${s.id}" aria-haspopup="true">Export ▾</button>
           <button class="btn danger" data-perm="submittals:admin" data-act="deleteRecord" data-id="${s.id}" data-label="submittal" data-back="#/p/${p.id}/submittals">Delete</button>
         </div></div>
       <div class="panel"><div class="info-grid">${info.map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join("")}</div>
