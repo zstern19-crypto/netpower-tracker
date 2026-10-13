@@ -381,3 +381,13 @@ body.auth-mode main { display: flex; justify-content: center; align-items: flex-
 .dv-rfi-banner { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; background: #e8f0fc; border-bottom: 1px solid #b9cdf0; color: #12407f; font-size: 14px; }
 .dv-rfi-banner .spacer { flex: 1; }
 .dv-head .dv-scale { font-weight: 400; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 0 0 12px; }
+.tabs a { padding: 8px 14px; border-bottom: 2px solid transparent; color: var(--muted); text-decoration: none; font-weight: 600; }
+.tabs a.on { color: var(--accent); border-bottom-color: var(--accent); }
+.trade-head { padding: 10px 14px; font-weight: 700; background: #fafbfc; border-bottom: 1px solid var(--line); }
+.with-mic { display: flex; gap: 6px; align-items: center; }
+.with-mic.top { align-items: flex-start; }
+.with-mic > input, .with-mic > select, .with-mic > textarea { flex: 1; min-width: 0; }
+.mic-btn { flex: none; width: 36px; height: 36px; border: 1px solid var(--line); background: #fff; border-radius: 8px; cursor: pointer; font-size: 16px; }
+.mic.listening { background: #e5322d; border-color: #e5322d; color: #fff; animation: micPulse 1.2s infinite; }
+@keyframes micPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(229,50,45,.5); } 50% { box-shadow: 0 0 0 6px rgba(229,50,45,0); } }

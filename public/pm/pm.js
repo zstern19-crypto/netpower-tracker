@@ -459,7 +459,7 @@
           current.tool = parts[2] || "home";
           // Load only what this user may see
           const LOADS = [["rfi", "rfis"], ["submittal", "submittals"], ["dailylog", "dailylog"], ["punch", "punch"],
-            ["drawing", "drawings"], ["markup", "drawings"], ["drawset", "drawings"], ["spec", "specs"], ["lookup", null]];
+            ["drawing", "drawings"], ["markup", "drawings"], ["drawset", "drawings"], ["spec", "specs"], ["subpackage", "submittals"], ["lookup", null]];
           await Promise.all(LOADS.filter(([, tool]) => !tool || can(p.id, tool)).map(([t]) => Store.load(t, p.id)));
           const sub = parts[3];
           const F = PM.forms;
@@ -468,7 +468,7 @@
           view = noAccess ? () => `<div class="empty">You don't have access to this part of the project. Ask a company admin if you need it.</div>` : {
             home: () => projectHome(p),
             rfis: () => sub === "new" ? F.rfiPage(p, null) : parts[4] === "edit" ? F.rfiPage(p, Store.get(sub)) : sub ? rfiDetail(p, sub) : rfiList(p),
-            submittals: () => sub === "new" ? F.submittalPage(p, null, query) : parts[4] === "edit" ? F.submittalPage(p, Store.get(sub)) : sub ? submittalDetail(p, sub) : submittalList(p),
+            submittals: () => sub === "packages" ? (parts[4] ? F.packageDetail(p, parts[4]) : F.packagesPage(p)) : sub === "new" ? F.submittalPage(p, null, query) : parts[4] === "edit" ? F.submittalPage(p, Store.get(sub)) : sub ? submittalDetail(p, sub) : submittalList(p),
             specs: () => F.specsPage(p, sub),
             permissions: () => PM.auth.projectPermissions(p),
             dailylog: () => dailyLog(p, sub),
@@ -964,7 +964,7 @@
         ${(d.responses || []).map(x => `<div class="thread"><div class="meta"><strong>${esc(x.by)}</strong> · ${fmtDateTime(x.at)} ${x.official ? pill("Official") : ""}
           <button class="btn small no-print" data-perm="rfis:standard" data-act="rfiOfficial" data-id="${r.id}" data-resp="${x.id}">${x.official ? "Unmark official" : "Mark official"}</button></div><div class="prose">${esc(x.text)}</div></div>`).join("") || `<p class="muted">No responses yet.</p>`}
         ${d.status !== "Draft" ? `<div class="no-print" style="margin-top:14px" data-perm="rfis:standard">
-          <div class="field"><label for="respText">Add a response</label><textarea id="respText" placeholder="Type your response…"></textarea></div>
+          <div class="field"><label for="respText">Add a response</label><div class="with-mic top"><textarea id="respText" placeholder="Type or dictate your response…"></textarea>${PM.forms.micBtn("respText")}</div></div>
           <div style="display:flex;gap:16px;align-items:center;margin-top:8px;flex-wrap:wrap">
             <label class="inline-check"><input type="checkbox" id="respOfficial"> Official response</label>
             ${open ? `<label class="inline-check"><input type="checkbox" id="respClose"> Close RFI</label>` : `<input type="checkbox" id="respClose" hidden>`}
@@ -1037,17 +1037,22 @@
   function submittalList(p) {
     const key = "sub_" + p.id;
     LIST_RENDERERS[key] = () => {
+      const trade = getFilter(key).trade || "";
+      const pkgTrade = s => { const k = Store.get(s.data.packageId); return k ? k.data.trade || "" : ""; };
       const rows = Store.all("submittal", p.id)
-        .filter(s => matchFilter(key, s, ["#" + s.data.number, s.data.title, s.data.specSection, s.data.subType, bicNames(submittalBIC(s)), subResponsible(s.data)].join(" "), s.data.status !== "Closed", submittalBIC(s)))
+        .filter(s => !trade || pkgTrade(s) === trade)
+        .filter(s => matchFilter(key, s, ["#" + s.data.number, s.data.title, s.data.specSection, s.data.subType, bicNames(submittalBIC(s)), subResponsible(s.data), PM.forms.packageName(s.data.packageId) || s.data.package || ""].join(" "), s.data.status !== "Closed", submittalBIC(s)))
         .sort((a, b) => (a.data.specSection || "").localeCompare(b.data.specSection || "") || a.data.number - b.data.number || a.data.revision - b.data.revision);
-      if (!rows.length) return `<tr><td colspan="8" class="empty">No submittals found.</td></tr>`;
+      if (!rows.length) return `<tr><td colspan="9" class="empty">No submittals found.</td></tr>`;
       return rows.map(s => {
         const d = s.data;
         const open = !["Closed", "Approved", "Approved as Noted"].includes(d.status);
         return `<tr class="click" data-href="#/p/${p.id}/submittals/${s.id}">
           <td class="nowrap">${esc(d.specSection)}</td>
           <td class="nowrap"><a href="#/p/${p.id}/submittals/${s.id}">#${d.number}.${d.revision || 0}</a></td>
-          <td>${esc(d.title)}</td><td>${esc(d.subType)}</td><td>${pill(d.status)}</td>
+          <td>${esc(d.title)}</td>
+          <td>${d.packageId && Store.get(d.packageId) ? `<a href="#/p/${p.id}/submittals/packages/${d.packageId}">${esc(PM.forms.packageName(d.packageId))}</a>` : esc(d.package || "")}</td>
+          <td>${esc(d.subType)}</td><td>${pill(d.status)}</td>
           <td>${esc(bicNames(submittalBIC(s)))}</td>
           <td>${esc(subResponsible(d))}</td>
           <td class="nowrap ${isOverdue(d.due, open) ? "overdue" : ""}">${fmtDate(d.due)}</td></tr>`;
@@ -1056,8 +1061,9 @@
     return `
       <div class="page-head"><h1>Submittals</h1>
         <div class="actions"><button class="btn" data-act="exportSubmittals" data-project="${p.id}">Export CSV</button><button class="btn primary" data-perm="submittals:standard" data-act="newSubmittal" data-project="${p.id}">+ Create Submittal</button></div></div>
-      <div class="panel flush">${toolbarHTML(key, SUB_STATUSES)}
-        <div class="table-wrap"><table class="list"><thead><tr><th>Spec Section</th><th>#</th><th>Title</th><th>Type</th><th>Status</th><th>Ball In Court</th><th>Responsible</th><th>Due</th></tr></thead>
+      ${PM.forms.subTabs(p, "items")}
+      <div class="panel flush">${toolbarHTML(key, SUB_STATUSES, (() => { const trades = [...new Set(PM.forms.packagesOf(p).map(k => k.data.trade).filter(Boolean))].sort(); const f = getFilter(key); return trades.length ? `<select name="trade" data-act="filter" data-key="${key}" aria-label="Trade"><option value="">All trades</option>${trades.map(t => `<option ${f.trade === t ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>` : ""; })())}
+        <div class="table-wrap"><table class="list"><thead><tr><th>Spec Section</th><th>#</th><th>Title</th><th>Package</th><th>Type</th><th>Status</th><th>Ball In Court</th><th>Responsible</th><th>Due</th></tr></thead>
         <tbody id="listBody">${LIST_RENDERERS[key]()}</tbody></table></div></div>`;
   }
 
@@ -1075,7 +1081,7 @@
       ["Status", pill(d.status)], ["Ball In Court", esc(bicNames(submittalBIC(s))) || "—"], ["Final Due", `<span class="${isOverdue(d.due, open) ? "overdue" : ""}">${fmtDate(d.due) || "—"}</span>`],
       ["Spec Section", esc(d.specSection) || "—"], ["Type", esc(d.subType) || "—"], ["Location", esc(d.location) || "—"],
       ["Submittal Manager", esc(contactName(d.managerId)) || "—"], ["Responsible Contractor", esc(subResponsible(d)) || "—"], ["Received From", esc(contactLabel(d.receivedFromId)) || "—"],
-      ["Submittal Package", esc(d.package) || "—"], ["Cost Code", esc(d.costCode) || "—"], ["Issue Date", fmtDate(d.issueDate) || "—"],
+      ["Submittal Package", d.packageId && Store.get(d.packageId) ? `<a href="#/p/${p.id}/submittals/packages/${d.packageId}">${esc(PM.forms.packageName(d.packageId))}</a> <span class="muted">(${esc(Store.get(d.packageId).data.trade || "")})</span>` : esc(d.package) || "—"], ["Cost Code", esc(d.costCode) || "—"], ["Issue Date", fmtDate(d.issueDate) || "—"],
       ["Submit By", fmtDate(d.submitBy) || "—"], ["Received", fmtDate(d.received) || "—"], ["Required On Site", fmtDate(d.requiredOnSite) || "—"],
       ["Distribution List", esc((d.distribution || []).map(contactName).join(", ")) || "—"],
       ["Linked Drawings", (d.linkedDrawings || []).map(id => Store.get(id)).filter(Boolean).map(g => `<a href="#/p/${p.id}/drawings/${g.id}">${esc(g.data.number)}</a>`).join(", ") || "—"],
