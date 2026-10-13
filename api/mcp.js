@@ -19,7 +19,7 @@ const fail = msg => { const e = new Error(msg); e.userFacing = true; throw e; };
 
 // ── Tool definitions ──
 const projectArg = { type: "string", description: "Project name, project number, or id (partial names are fine)" };
-const TOOLS = [
+export const TOOLS = [
   { name: "list_projects", description: "List the NetPower projects you can access (name, number, status).", inputSchema: { type: "object", properties: {} } },
   { name: "list_people", description: "List the people on a project's team — use their names for RFI assignees or punch item assignees.", inputSchema: { type: "object", properties: { project: projectArg }, required: ["project"] } },
   { name: "list_rfis", description: "List RFIs on a project, newest first.", inputSchema: { type: "object", properties: { project: projectArg, status: { type: "string", enum: ["Draft", "Open", "Closed"], description: "Only this status" } }, required: ["project"] } },
@@ -31,6 +31,7 @@ const TOOLS = [
       due_date: { type: "string", description: "YYYY-MM-DD; defaults to 7 days from today" }, location: { type: "string" }, drawing: { type: "string", description: "Drawing / sheet number, e.g. E-201" },
       spec_section: { type: "string" }, draft: { type: "boolean", description: "Save as Draft even if assignees are given" }, private: { type: "boolean" }
     }, required: ["project", "subject", "question"] } },
+  { name: "get_rfi_photo_link", description: "Get a link that opens an RFI's 'Add photos' screen in NetPower PM (phone camera or photo library). Photos shared in this chat can't be sent through the connector, so give the user this link to attach them.", inputSchema: { type: "object", properties: { project: projectArg, number: { type: "integer" } }, required: ["project", "number"] } },
   { name: "respond_to_rfi", description: "Add a response to an RFI, optionally as the official answer and/or closing it.", inputSchema: { type: "object", properties: { project: projectArg, number: { type: "integer" }, response: { type: "string" }, official: { type: "boolean" }, close: { type: "boolean" } }, required: ["project", "number", "response"] } },
   { name: "create_punch_item", description: "Create a punch list item on a project.", inputSchema: { type: "object", properties: { project: projectArg, title: { type: "string" }, description: { type: "string" }, location: { type: "string" }, assignee: { type: "string", description: "Name of the person who does the work" }, priority: { type: "string", enum: ["Low", "Medium", "High"] }, due_date: { type: "string", description: "YYYY-MM-DD" } }, required: ["project", "title"] } },
   { name: "add_daily_log_note", description: "Add a note (and optionally work performed) to a project's daily log for a date (default today). Creates the log if it doesn't exist.", inputSchema: { type: "object", properties: { project: projectArg, note: { type: "string" }, work_performed: { type: "string", description: "Description of work performed today" }, date: { type: "string", description: "YYYY-MM-DD" } }, required: ["project"] } },
@@ -75,7 +76,7 @@ async function recordsOf(ctx, type, p) {
 const contactName = (contacts, id) => (contacts.find(c => c.id === id) || { data: { name: "" } }).data.name;
 
 // ── Tool implementations ──
-async function callTool(ctx, req, name, a) {
+export async function callTool(ctx, req, name, a) {
   a = a || {};
   switch (name) {
     case "list_projects": {
@@ -122,7 +123,13 @@ async function callTool(ctx, req, name, a) {
         ...(open ? { openedAt: now() } : {}), createdById: ctx.contactId, createdByUserId: ctx.user.id, source: "Claude",
         history: [history(ctx, open ? "RFI created and opened (via Claude)" : "RFI created as draft (via Claude)")], updatedAt: now() } };
       await save(ctx, rec);
-      return `Created RFI #${number} "${rec.data.subject}" on ${p.data.name} as ${rec.data.status}${open ? "" : assignees.length ? "" : " (no assignees yet — add them in the app or call again with assignees)"}. Due ${due}.\nOpen in app: ${appUrl(req, p, "rfis/" + rec.id)}`;
+      return `Created RFI #${number} "${rec.data.subject}" on ${p.data.name} as ${rec.data.status}${open ? "" : assignees.length ? "" : " (no assignees yet — add them in the app or call again with assignees)"}. Due ${due}.\nOpen in app: ${appUrl(req, p, "rfis/" + rec.id)}\nAdd photos (tap on your phone to take or pick pictures): ${appUrl(req, p, "rfis/" + rec.id + "?addPhotos=1")}`;
+    }
+    case "get_rfi_photo_link": {
+      const p = await findProject(ctx, a.project);
+      const r = (await recordsOf(ctx, "rfi", p)).find(x => Number(x.data.number) === Number(a.number));
+      if (!r) fail(`RFI #${a.number} not found on ${p.data.name}.`);
+      return `Add photos to RFI #${r.data.number} "${r.data.subject}" here (opens the camera / photo picker in NetPower PM): ${appUrl(req, p, "rfis/" + r.id + "?addPhotos=1")}\nIt has ${(r.data.attachments || []).length} attachment(s) now.`;
     }
     case "respond_to_rfi": {
       const p = await findProject(ctx, a.project);
@@ -187,7 +194,7 @@ async function handleMessage(ctx, req, msg) {
     case "initialize": {
       const v = params && VERSIONS.includes(params.protocolVersion) ? params.protocolVersion : VERSIONS[0];
       return reply({ protocolVersion: v, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "netpower-pm", version: "1.0.0" },
-        instructions: `NetPower PM (construction project management). Connected as ${ctx.user.data.name}. Use list_projects first if the project is unclear. RFIs need a subject and question; add assignees (names from list_people) so the RFI opens right away.` });
+        instructions: `NetPower PM (construction project management). Connected as ${ctx.user.data.name}. Use list_projects first if the project is unclear. RFIs need a subject and question; add assignees (names from list_people) so the RFI opens right away. Photos from this chat can't be passed through the connector — after creating an RFI, give the user its "Add photos" link (also available from get_rfi_photo_link).` });
     }
     case "ping": return reply({});
     case "tools/list": return reply({ tools: TOOLS });

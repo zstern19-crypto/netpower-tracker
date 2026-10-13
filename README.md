@@ -31,6 +31,10 @@ Modules:
 - **Certifications** (Manpower → Certifications) — OSHA etc. per person with card upload and 30-day expiry alerts
 - **Daily log reminders** — per project: work days or weekly, due time, foremen to remind, PMs to notify after a delay; shown in the 🔔 notifications
 - **Voice to text** — 🎤 on RFI subject, question and responses (browser speech recognition: Chrome, Edge, Safari)
+- **Drawing review** — new uploads wait in "Pending review" (only drawing admins see them): fix sheet info, compare each revision side-by-side or as a red/green overlay, then publish or reject
+- **RFI export** — Export ▾: PDF (print → Save as PDF, includes photos), Email (opens an Outlook draft with the RFI written in), view-only links for people without an account (`/pm/share.html`); RFI status can be changed any time; "📷 Add photos"
+- **Tools** (top bar) — tool inventory with photos, check out/in to a person and job, history, overdue reminders
+- **AI assistant** — "✦ Ask AI" chat (Claude via the Anthropic API, `api/assistant.js`): answers questions and creates RFIs / punch items / daily log notes with the user's permissions; company admins only by default, with a monthly $ limit (default $25) set in the panel's Settings. Uses the `ANTHROPIC_API_KEY` env var
 - **Claude connector** — user menu → Connect Claude gives each user a private link to add as a custom connector in claude.ai, so Claude can list projects/people, create and answer RFIs, create punch items and add daily log notes with that user's permissions (`api/mcp.js`, MCP Streamable HTTP)
 - **Project Directory** — project team with roles
 - **Project Management menu** — dropdown in the top bar listing the project's tools, with quick-create (⊕) links

@@ -42,3 +42,10 @@
   for email / WhatsApp (not built yet; the user's email is Outlook / Microsoft 365).
 - `api/mcp.js` is the Claude connector (MCP). Keys are per user (`/api/mcp?key=<userId>.<secret>`, only a hash stored).
 - Airtable free plan is ~1,000 API calls/month; the owner chose to keep Airtable for now ("decide later").
+- `api/assistant.js` — in-app AI assistant (Anthropic SDK, `claude-opus-5-5`, effort low, `fallbacks: "default"`).
+  Reuses `TOOLS`/`callTool` from `api/mcp.js`. Settings record `aiset_company` (type `aisetting`), monthly spend
+  `aiuse_YYYYMM` (type `aiusage`). Keep the system prompt and tool list frozen (prompt cache + preserved thinking);
+  per-request context goes in the user message. Owner chose "admins only first".
+- Drawing uploads are held as `drawset` records with `status: "pending"` + `pendingSheets` until a drawings admin
+  publishes them (`publishSet` in drawings.js); the server hides pending sets from non-admins.
+- Tools (`tool` records) are company-wide; non-admins may only change checkout/condition and append history.

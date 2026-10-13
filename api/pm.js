@@ -19,7 +19,9 @@ import * as notify from "../lib/notify.js";
 
 const { ID_RE } = db;
 const { TYPE_TOOL, ensure, httpError } = auth;
-const TYPES = ["project", "company", "contact", "lookup", "member", "permtemplate", "cert", ...Object.keys(TYPE_TOOL)];
+const TYPES = ["project", "company", "contact", "lookup", "member", "permtemplate", "cert", "tool", ...Object.keys(TYPE_TOOL)];
+// Tool tracker: everyone may check tools out/in (these fields); only company admins edit the inventory
+const TOOL_MOVE_FIELDS = ["checkout", "history", "condition", "conditionNote", "updatedAt"];
 const PRIVATE_TYPES = ["rfi", "submittal"];
 
 // ── Helpers ──
@@ -42,7 +44,7 @@ export function canSeePrivate(ctx, rec) {
 }
 
 export async function checkRead(ctx, type, project) {
-  if (type === "project" || type === "company" || type === "contact" || type === "cert") return;  // certs are filtered per user below
+  if (type === "project" || type === "company" || type === "contact" || type === "cert" || type === "tool") return;  // certs are filtered per user below
   if (type === "deploy" && !project) return ensure(ctx.isAdmin || ctx.projectIds.some(pid => ctx.can(pid, "manpower", "read")));
   if (type === "member" || type === "permtemplate") return ensure(ctx.isAdmin);
   ensure(project && ID_RE.test(project), "A project is required");
@@ -57,6 +59,16 @@ export async function checkWrite(ctx, rec, stored) {
   const t = rec.type;
   if (t === "user") ensure(false);
   if (t === "company" || t === "contact" || t === "member" || t === "permtemplate") return ensure(ctx.isAdmin, "Only company admins can change this");
+  if (t === "tool") {
+    ensure(!rec.projectId, "Tools are company-wide");
+    if (ctx.isAdmin) return;
+    ensure(stored, "Only company admins can add tools");
+    const changed = Object.keys({ ...stored.data, ...rec.data }).filter(k => JSON.stringify(stored.data[k]) !== JSON.stringify(rec.data[k]));
+    ensure(changed.every(k => TOOL_MOVE_FIELDS.includes(k)), "Only company admins can edit tool details");
+    // History can only grow (no rewriting who had what)
+    ensure((rec.data.history || []).length >= (stored.data.history || []).length && JSON.stringify((rec.data.history || []).slice(0, (stored.data.history || []).length)) === JSON.stringify(stored.data.history || []), "Tool history can't be changed");
+    return;
+  }
   if (t === "cert") {
     ensure(!rec.projectId, "Certifications are company-wide");
     ensure(ID_RE.test(rec.data.userId || ""), "Pick who the certification belongs to");
@@ -75,6 +87,9 @@ export async function checkWrite(ctx, rec, stored) {
       continue;
     }
     ensure(ctx.can(pid, TYPE_TOOL[t], t === "logsetting" ? "admin" : "standard"));
+    // Only drawing admins may publish or edit an upload that's waiting for review
+    if (t === "drawset" && stored && stored.data.status === "pending") ensure(ctx.can(pid, "drawings", "admin"), "Only drawing admins can review uploads");
+    if (t === "drawset" && !stored && rec.data.status !== "pending") ensure(ctx.can(pid, "drawings", "admin"), "New drawing uploads must go through review");
     if (t === "jphoto" && r === stored && !ctx.can(pid, "photos", "admin")) ensure(stored.data.byUserId === ctx.user.id, "You can only edit your own photos");
     if (t === "markup" && !ctx.can(pid, "drawings", "admin")) ensure(r.data.ownerId === ctx.contactId, "You can only change your own markups");
   }
@@ -85,6 +100,7 @@ async function checkDelete(ctx, rec) {
   const t = rec.type;
   if (["project", "company", "contact", "member", "permtemplate", "user"].includes(t)) return ensure(ctx.isAdmin, "Only company admins can delete this");
   if (t === "cert") return ensure(ctx.isAdmin || rec.data.userId === ctx.user.id, "You can only delete your own certifications");
+  if (t === "tool") return ensure(ctx.isAdmin, "Only company admins can delete tools");
   const pid = await projectOf(t, rec.projectId);
   ensure(pid, "Not found");
   if (t === "lookup") return ensure(ctx.can(pid, "admin", "admin"));
@@ -102,6 +118,13 @@ function body(req) {
 }
 
 // ── Auth actions ──
+
+// RFI shared with a view-only link: data.share = { token, by, at }
+export async function sharedRfi(token) {
+  if (!/^[A-Za-z0-9_-]{24,64}$/.test(String(token || ""))) return null;
+  const hits = await db.find(db.and([db.eq("Type", "rfi"), `FIND('"token":"${token}"',{Data})`]));
+  return hits.find(r => r.data.share && r.data.share.token === token) || null;
+}
 
 // Optional profile fields (photo is a small JPEG data URL made in the browser)
 function profileFields(b) {
@@ -152,7 +175,7 @@ async function handleAction(req, res, action) {
     return res.status(200).json({ ok: true, user: auth.publicUser(ctx.user), isAdmin: ctx.isAdmin, perms: ctx.perms, tools: auth.TOOLS, levels: auth.LEVELS });
   }
 
-  if (req.method !== "POST" && !["users", "people", "notifications"].includes(action)) throw httpError(405, "Method not allowed");
+  if (req.method !== "POST" && !["users", "people", "notifications", "shared"].includes(action)) throw httpError(405, "Method not allowed");
 
   if (action === "setup") {
     ensure((await db.find(db.eq("Type", "user"))).length === 0, "Setup has already been completed — please sign in");
@@ -175,6 +198,24 @@ async function handleAction(req, res, action) {
     }
     res.setHeader("Set-Cookie", auth.sessionCookie(user));
     return res.status(200).json({ ok: true });
+  }
+
+  // View-only RFI link (no login): /pm/share.html?t=<token>
+  if (action === "shared") {
+    const rfi = await sharedRfi(req.query.t);
+    if (!rfi) throw httpError(404, "This link is no longer valid. Ask the sender for a new one.");
+    const [project, contacts, companies] = await Promise.all([db.get(rfi.projectId), db.find(db.eq("Type", "contact")), db.find(db.eq("Type", "company"))]);
+    const name = id => { const c = contacts.find(x => x.id === id); return c ? c.data.name : ""; };
+    const d = rfi.data;
+    return res.status(200).json({ ok: true, rfi: {
+      number: d.number, subject: d.subject, status: d.status, due: d.due, question: d.question || "", suggestion: d.suggestion || "",
+      manager: name(d.managerId), assignees: (d.assignees || []).map(name), receivedFrom: name(d.receivedFromId),
+      responsibleContractor: ((companies.find(c => c.id === d.responsibleCompanyId) || {}).data || {}).name || "",
+      location: d.location || "", drawing: d.drawing || "", specSection: d.specSection || "", costImpact: d.costImpact || "", scheduleImpact: d.scheduleImpact || "",
+      createdAt: d.createdAt || "", createdBy: d.createdBy || "",
+      attachments: (d.attachments || []).map(f => ({ name: f.name, size: f.size, type: f.type || "", url: f.url })),
+      responses: (d.responses || []).map(x => ({ by: x.by, at: x.at, text: x.text, official: !!x.official }))
+    }, project: project ? { name: project.data.name, number: project.data.number || "", address: [project.data.address, project.data.city, project.data.state].filter(Boolean).join(", ") } : null });
   }
 
   if (action === "logout") {
@@ -300,6 +341,8 @@ export default async function handler(req, res) {
       await checkRead(ctx, type, project);
       let records = await db.find(db.and([db.eq("Type", type), ...(project ? [db.eq("ProjectID", project)] : [])]));
       if (type === "project" && !ctx.isAdmin) records = records.filter(r => ctx.isMember(r.id));
+      // Drawing uploads waiting for review are only visible to drawing admins
+      if (type === "drawset") records = records.filter(r => r.data.status !== "pending" || ctx.can(r.projectId, "drawings", "admin"));
       if (type === "cert" && !ctx.isAdmin) records = records.filter(r => r.data.userId === ctx.user.id);
       if (type === "deploy" && !project) records = records.filter(r => ctx.can(r.projectId, "manpower", "read"));
       records = records.filter(r => r.id && canSeePrivate(ctx, r));
