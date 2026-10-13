@@ -72,6 +72,7 @@
     m.innerHTML = `
       <div class="um-head"><strong>${esc(u.name)}</strong><div class="muted">${esc(u.email)}</div>${PM.session.isAdmin ? `<span class="pill admin-pill">Company admin</span>` : ""}</div>
       ${PM.session.isAdmin ? `<a href="#/admin/users" role="menuitem">Users</a><a href="#/admin/templates" role="menuitem">Permission Templates</a>` : ""}
+      <a href="#" data-um="profile" role="menuitem">My profile (photo, trade, phone)</a>
       <a href="#" data-um="password" role="menuitem">Change password</a>
       <a href="#" data-um="logout" role="menuitem">Sign out</a>`;
     document.body.appendChild(m);
@@ -84,6 +85,7 @@
       ev.preventDefault();
       if (a.dataset.um === "logout") { await post("logout").catch(() => {}); location.hash = "#/"; location.reload(); }
       if (a.dataset.um === "password") changePassword();
+      if (a.dataset.um === "profile" && PM.people) PM.people.myProfile();
     };
   }
 
@@ -162,8 +164,10 @@
         <div class="field" style="align-self:end"><label class="inline-check"><input type="checkbox" id="usAdmin" ${u && u.companyAdmin ? "checked" : ""} ${isSelf ? "disabled" : ""}> Company admin (full access to everything)</label></div>
         ${isNew ? "" : `<div class="field"><label class="inline-check"><input type="checkbox" id="usActive" ${u.active ? "checked" : ""} ${isSelf ? "disabled" : ""}> Active (can sign in)</label></div>`}
         </div>
+        ${PM.people ? PM.people.profileFieldsHTML(u) : ""}
         <p class="muted" style="font-size:12px">Share the password with them privately. Emails aren't sent automatically yet. ${contact ? "" : ""}</p>`,
       onOpen: root => {
+        if (PM.people) PM.people.wireProfileFields(root);
         const pick = $("#usContact", root);
         if (pick) pick.onchange = () => {
           const c = Store.get(pick.value);
@@ -174,7 +178,8 @@
         const body = {
           ...(u ? { id: u.id } : {}),
           name: $("#usName", root).value.trim(),
-          email: $("#usEmail", root).value.trim()
+          email: $("#usEmail", root).value.trim(),
+          ...(PM.people ? PM.people.readProfile(root) : {})
         };
         const pw = $("#usPass", root).value;
         if (pw) body.password = pw;
@@ -184,6 +189,7 @@
           body.contactId = $("#usContact", root).value;
         } else if (!isSelf) body.active = $("#usActive", root).checked;
         await post("saveUser", body);
+        if (PM.people) PM.people.invalidate();
         Store.loaded.delete("contact|");
         toast(isNew ? "User added" : "User saved");
         return true;

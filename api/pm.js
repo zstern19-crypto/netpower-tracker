@@ -15,10 +15,11 @@
 
 import * as db from "../lib/db.js";
 import * as auth from "../lib/auth.js";
+import * as notify from "../lib/notify.js";
 
 const { ID_RE } = db;
 const { TYPE_TOOL, ensure, httpError } = auth;
-const TYPES = ["project", "company", "contact", "lookup", "member", "permtemplate", ...Object.keys(TYPE_TOOL)];
+const TYPES = ["project", "company", "contact", "lookup", "member", "permtemplate", "cert", ...Object.keys(TYPE_TOOL)];
 const PRIVATE_TYPES = ["rfi", "submittal"];
 
 // ── Helpers ──
@@ -41,7 +42,8 @@ function canSeePrivate(ctx, rec) {
 }
 
 async function checkRead(ctx, type, project) {
-  if (type === "project" || type === "company" || type === "contact") return;
+  if (type === "project" || type === "company" || type === "contact" || type === "cert") return;  // certs are filtered per user below
+  if (type === "deploy" && !project) return ensure(ctx.isAdmin || ctx.projectIds.some(pid => ctx.can(pid, "manpower", "read")));
   if (type === "member" || type === "permtemplate") return ensure(ctx.isAdmin);
   ensure(project && ID_RE.test(project), "A project is required");
   const pid = await projectOf(type, project);
@@ -55,6 +57,11 @@ async function checkWrite(ctx, rec, stored) {
   const t = rec.type;
   if (t === "user") ensure(false);
   if (t === "company" || t === "contact" || t === "member" || t === "permtemplate") return ensure(ctx.isAdmin, "Only company admins can change this");
+  if (t === "cert") {
+    ensure(!rec.projectId, "Certifications are company-wide");
+    ensure(ID_RE.test(rec.data.userId || ""), "Pick who the certification belongs to");
+    return ensure(ctx.isAdmin || (rec.data.userId === ctx.user.id && (!stored || stored.data.userId === ctx.user.id)), "You can only change your own certifications");
+  }
   if (t === "project") {
     if (!stored) return ensure(ctx.isAdmin, "Only company admins can create projects");
     return ensure(ctx.isAdmin || ctx.can(rec.id, "admin", "admin") || ctx.can(rec.id, "directory", "admin"));
@@ -67,7 +74,8 @@ async function checkWrite(ctx, rec, stored) {
       ensure(auth.TOOL_IDS.some(tool => ctx.can(pid, tool, "standard")));
       continue;
     }
-    ensure(ctx.can(pid, TYPE_TOOL[t], "standard"));
+    ensure(ctx.can(pid, TYPE_TOOL[t], t === "logsetting" ? "admin" : "standard"));
+    if (t === "jphoto" && r === stored && !ctx.can(pid, "photos", "admin")) ensure(stored.data.byUserId === ctx.user.id, "You can only edit your own photos");
     if (t === "markup" && !ctx.can(pid, "drawings", "admin")) ensure(r.data.ownerId === ctx.contactId, "You can only change your own markups");
   }
   if (stored && PRIVATE_TYPES.includes(t)) ensure(canSeePrivate(ctx, stored));
@@ -76,13 +84,15 @@ async function checkWrite(ctx, rec, stored) {
 async function checkDelete(ctx, rec) {
   const t = rec.type;
   if (["project", "company", "contact", "member", "permtemplate", "user"].includes(t)) return ensure(ctx.isAdmin, "Only company admins can delete this");
+  if (t === "cert") return ensure(ctx.isAdmin || rec.data.userId === ctx.user.id, "You can only delete your own certifications");
   const pid = await projectOf(t, rec.projectId);
   ensure(pid, "Not found");
   if (t === "lookup") return ensure(ctx.can(pid, "admin", "admin"));
   const tool = TYPE_TOOL[t];
   if (ctx.can(pid, tool, "admin")) return;
   // Standard users may remove their own markups and photos
-  const own = (t === "markup" && rec.data.ownerId === ctx.contactId) || (t === "photo" && rec.data.byId && rec.data.byId === ctx.contactId);
+  const own = (t === "markup" && rec.data.ownerId === ctx.contactId) || (t === "photo" && rec.data.byId && rec.data.byId === ctx.contactId) ||
+    (t === "jphoto" && rec.data.byUserId === ctx.user.id);
   ensure(own && ctx.can(pid, tool, "standard"), "Only admins of this tool can delete it");
 }
 
@@ -93,7 +103,20 @@ function body(req) {
 
 // ── Auth actions ──
 
-async function createUser({ name, email, password, companyAdmin, contactId, companyId }) {
+// Optional profile fields (photo is a small JPEG data URL made in the browser)
+function profileFields(b) {
+  const out = {};
+  if (b.photo != null) {
+    const ok = b.photo === "" || (/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(b.photo) && b.photo.length < 150000);
+    if (!ok) throw httpError(400, "Photo must be a small JPEG/PNG image");
+    out.photo = b.photo;
+  }
+  for (const k of ["phone", "trade", "title"]) if (b[k] != null) out[k] = String(b[k]).trim().slice(0, 80);
+  return out;
+}
+
+async function createUser({ name, email, password, companyAdmin, contactId, companyId, ...rest }) {
+  const profile = profileFields(rest);
   name = String(name || "").trim();
   email = auth.normEmail(email);
   if (!name) throw httpError(400, "Name is required");
@@ -109,7 +132,7 @@ async function createUser({ name, email, password, companyAdmin, contactId, comp
   }
   const user = {
     id: "usr_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), type: "user", projectId: email,
-    data: { name, email, companyAdmin: !!companyAdmin, active: true, contactId, sessionVersion: 1, createdAt: now, ...auth.hashPassword(password) }
+    data: { name, email, companyAdmin: !!companyAdmin, active: true, contactId, sessionVersion: 1, createdAt: now, ...profile, ...auth.hashPassword(password) }
   };
   records.push(user);
   await db.save(records);
@@ -129,7 +152,7 @@ async function handleAction(req, res, action) {
     return res.status(200).json({ ok: true, user: auth.publicUser(ctx.user), isAdmin: ctx.isAdmin, perms: ctx.perms, tools: auth.TOOLS, levels: auth.LEVELS });
   }
 
-  if (req.method !== "POST" && action !== "users") throw httpError(405, "Method not allowed");
+  if (req.method !== "POST" && !["users", "people", "notifications"].includes(action)) throw httpError(405, "Method not allowed");
 
   if (action === "setup") {
     ensure((await db.find(db.eq("Type", "user"))).length === 0, "Setup has already been completed — please sign in");
@@ -172,6 +195,29 @@ async function handleAction(req, res, action) {
     return res.status(200).json({ ok: true });
   }
 
+  // Everyone: the crew list (names, photos, trades) for manpower, own profile, notifications
+  if (action === "people") {
+    const [users, certs] = await Promise.all([db.find(db.eq("Type", "user")), db.find(db.eq("Type", "cert"))]);
+    const alert = id => {
+      const states = certs.filter(c => c.data.userId === id).map(c => notify.certState(c));
+      return states.includes("expired") ? "expired" : states.includes("expiring") ? "expiring" : "";
+    };
+    return res.status(200).json({ ok: true, people: users.filter(u => u.data.active !== false).map(u => ({
+      id: u.id, name: u.data.name, photo: u.data.photo || "", trade: u.data.trade || "", title: u.data.title || "", contactId: u.data.contactId || "",
+      ...(ctx.isAdmin ? { phone: u.data.phone || "", email: u.data.email, certAlert: alert(u.id) } : {}) })) });
+  }
+  if (action === "notifications") {
+    const list = await auth.cached("notify:" + ctx.user.id, 60000, () => notify.forUser(ctx));
+    return res.status(200).json({ ok: true, notifications: list });
+  }
+  if (action === "saveProfile") {
+    const u = ctx.user;
+    const next = { ...u, data: { ...u.data, ...profileFields(b) } };
+    await db.save([next]);
+    auth.clearCache();
+    return res.status(200).json({ ok: true, user: auth.publicUser(next) });
+  }
+
   ensure(ctx.isAdmin, "Only company admins can manage users");
 
   if (action === "users") {
@@ -196,6 +242,7 @@ async function handleAction(req, res, action) {
       if ((await db.find(db.and([db.eq("Type", "user"), db.eq("ProjectID", email)]))).length) throw httpError(400, "A user with this email already exists");
       data.email = email;
     }
+    Object.assign(data, profileFields(b));
     if (b.companyAdmin != null) data.companyAdmin = !!b.companyAdmin;
     if (b.active != null) data.active = !!b.active;
     if (b.password) {
@@ -242,6 +289,8 @@ export default async function handler(req, res) {
       await checkRead(ctx, type, project);
       let records = await db.find(db.and([db.eq("Type", type), ...(project ? [db.eq("ProjectID", project)] : [])]));
       if (type === "project" && !ctx.isAdmin) records = records.filter(r => ctx.isMember(r.id));
+      if (type === "cert" && !ctx.isAdmin) records = records.filter(r => r.data.userId === ctx.user.id);
+      if (type === "deploy" && !project) records = records.filter(r => ctx.can(r.projectId, "manpower", "read"));
       records = records.filter(r => r.id && canSeePrivate(ctx, r));
       // Other people's markups: only what they've published
       if (type === "markup") records = records.map(r => (r.data.ownerId === ctx.contactId ? r
@@ -269,7 +318,7 @@ export default async function handler(req, res) {
         }
       }
       const result = await db.save(records, existing);
-      if (records.some(r => r.type === "member" || r.type === "permtemplate")) auth.clearCache();
+      if (records.some(r => ["member", "permtemplate", "cert", "logsetting", "dailylog"].includes(r.type))) auth.clearCache();
       return res.status(200).json({ ok: true, ...result });
     }
 

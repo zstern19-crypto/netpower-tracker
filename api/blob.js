@@ -22,7 +22,8 @@ import * as db from "../lib/db.js";
 import * as auth from "../lib/auth.js";
 
 const SIGNED_URL_TTL = 60 * 60 * 1000; // 1 hour
-const ATTACHMENT_TOOLS = ["rfis", "submittals", "punch", "dailylog", "specs"];
+const ATTACHMENT_TOOLS = ["rfis", "submittals", "punch", "dailylog", "specs", "photos"];
+const CERT_RE = /^certs\/([A-Za-z0-9_-]{1,64})\/[A-Za-z0-9._-]{1,200}$/;
 const DRAWING_RE = /^drawings\/([A-Za-z0-9_-]{1,64})\/[A-Za-z0-9._-]{1,200}$/;
 const ATTACH_RE = /^attachments\/([A-Za-z0-9_-]{1,64})\/([a-z]+)\/[A-Za-z0-9._-]{1,200}$/;
 
@@ -30,6 +31,8 @@ const ATTACH_RE = /^attachments\/([A-Za-z0-9_-]{1,64})\/([a-z]+)\/[A-Za-z0-9._-]
 function describePath(pathname) {
   let m = DRAWING_RE.exec(pathname);
   if (m) return { projectId: m[1], tool: "drawings", maxBytes: 500 * 1024 * 1024, types: ["application/pdf"], deleteLevel: "admin" };
+  m = CERT_RE.exec(pathname);
+  if (m) return { certUserId: m[1], maxBytes: 25 * 1024 * 1024, types: undefined, deleteLevel: "standard" };
   m = ATTACH_RE.exec(pathname);
   if (m && ATTACHMENT_TOOLS.includes(m[2])) return { projectId: m[1], tool: m[2], maxBytes: 100 * 1024 * 1024, types: undefined, deleteLevel: "standard" };
   throw auth.httpError(400, "Invalid file path");
@@ -41,6 +44,12 @@ function parseBlobUrl(raw) {
   if (u.protocol !== "https:" || !/\.blob\.vercel-storage\.com$/.test(u.hostname)) throw auth.httpError(400, "Not a Vercel Blob URL");
   const pathname = decodeURIComponent(u.pathname.replace(/^\//, ""));
   return { url: u.origin + u.pathname, pathname, isPrivate: u.hostname.includes(".private."), ...describePath(pathname) };
+}
+
+// Certification files belong to a person (company admins and that person); everything else to a project tool
+function allowed(ctx, f, level) {
+  if (f.certUserId) return ctx.isAdmin || ctx.user.id === f.certUserId;
+  return ctx.can(f.projectId, f.tool, level);
 }
 
 function credentials(req) {
@@ -69,7 +78,7 @@ export default async function handler(req, res) {
 
     if (req.method === "GET" && req.query && req.query.sign) {
       const f = parseBlobUrl(req.query.sign);
-      auth.ensure(ctx.can(f.projectId, f.tool, "read"));
+      auth.ensure(allowed(ctx, f, "read"));
       if (!f.isPrivate) return res.status(200).json({ ok: true, url: f.url });
       const token = await issueSignedToken({ pathname: f.pathname, operations: ["get"], validUntil: Date.now() + SIGNED_URL_TTL, ...credentials(req) });
       const { presignedUrl } = await presignUrl(token, { operation: "get", pathname: f.pathname, access: "private" });
@@ -80,7 +89,7 @@ export default async function handler(req, res) {
 
     if (req.method === "DELETE") {
       const f = parseBlobUrl(req.query && req.query.url);
-      auth.ensure(ctx.can(f.projectId, f.tool, f.deleteLevel));
+      auth.ensure(allowed(ctx, f, f.deleteLevel));
       await del(f.url, credentials(req));
       return res.status(200).json({ ok: true });
     }
@@ -89,7 +98,7 @@ export default async function handler(req, res) {
 
     const authorize = pathname => {
       const f = describePath(pathname);
-      auth.ensure(ctx.can(f.projectId, f.tool, "standard"), "You don't have permission to upload files here");
+      auth.ensure(allowed(ctx, f, "standard"), "You don't have permission to upload files here");
       return f;
     };
 

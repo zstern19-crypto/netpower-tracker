@@ -190,7 +190,7 @@
     });
   }
   // Route segment → permission tool
-  const ROUTE_TOOL = { rfis: "rfis", submittals: "submittals", dailylog: "dailylog", punch: "punch", drawings: "drawings", specs: "specs", team: "directory" };
+  const ROUTE_TOOL = { rfis: "rfis", submittals: "submittals", dailylog: "dailylog", punch: "punch", drawings: "drawings", specs: "specs", photos: "photos", team: "directory" };
 
   function contactName(id) { const c = Store.get(id); return c ? c.data.name : ""; }
   function companyName(id) { const c = Store.get(id); return c ? c.data.name : ""; }
@@ -359,6 +359,7 @@
     badge.hidden = Store.mode !== "local";
     badge.textContent = "Local demo mode";
     badge.title = "Airtable is not configured. Data is saved only in this browser.";
+    if (PM.people) PM.people.decorateTopbar();
     $$(".topnav a").forEach(a => a.classList.toggle("on", a.dataset.nav === current.nav));
   }
 
@@ -369,6 +370,7 @@
     ["punch", "Punch List", "punch", "punch?new=1"],
     ["dailylog", "Daily Log", "dailylog", null],
     ["drawings", "Drawings", "drawings", null],
+    ["photos", "Photos", "photos", "photos?upload=1"],
     ["specs", "Specifications", "specs", null]
   ];
 
@@ -382,7 +384,7 @@
     wrap.innerHTML = `<button class="pm-menu-btn" id="pmMenuBtn" aria-haspopup="true" aria-expanded="false">Project Management ▾</button>
       <div class="pm-menu" id="pmMenu" hidden role="menu">
         <div class="pm-menu-h">Project Management</div>
-        ${items.map(([route, label, tool, quick]) => `<div class="pm-menu-row"><a role="menuitem" href="#/p/${p.id}/${route}">${label}</a>${quick && can(p.id, tool, "standard") ? `<a class="pm-quick" href="#/p/${p.id}/${quick}" title="Create ${label === "Punch List" ? "punch item" : label.slice(0, -1)}" aria-label="Create ${label}">+</a>` : ""}</div>`).join("")}
+        ${items.map(([route, label, tool, quick]) => `<div class="pm-menu-row"><a role="menuitem" href="#/p/${p.id}/${route}">${label}</a>${quick && can(p.id, tool, "standard") ? `<a class="pm-quick" href="#/p/${p.id}/${quick}" title="${label === "Photos" ? "Upload photos" : "Create " + (label === "Punch List" ? "punch item" : label.slice(0, -1))}" aria-label="Create ${label}">+</a>` : ""}</div>`).join("")}
         <div class="pm-menu-sep"></div>
         <div class="pm-menu-row"><a href="#/p/${p.id}">Project Home</a></div>
         ${can(p.id, "directory") ? `<div class="pm-menu-row"><a href="#/p/${p.id}/team">Project Directory</a></div>` : ""}
@@ -423,6 +425,7 @@
       ["submittals", "Submittals", open("submittal", ["Open", "Revise and Resubmit"])],
       ["dailylog", "Daily Log", ""],
       ["punch", "Punch List", open("punch", ["Open", "Ready for Review", "Work Not Accepted"])],
+      ["photos", "Photos", Store.all("jphoto", p.id).length || ""],
       ["specs", "Specifications", Store.all("spec", p.id).length || ""],
       ["team", "Project Directory", ((p.data.team || []).length) || ""],
       ...(isCompanyAdmin() && Store.mode !== "local" ? [["permissions", "Permissions", ""]] : [])
@@ -459,7 +462,7 @@
           current.tool = parts[2] || "home";
           // Load only what this user may see
           const LOADS = [["rfi", "rfis"], ["submittal", "submittals"], ["dailylog", "dailylog"], ["punch", "punch"],
-            ["drawing", "drawings"], ["markup", "drawings"], ["drawset", "drawings"], ["spec", "specs"], ["subpackage", "submittals"], ["lookup", null]];
+            ["drawing", "drawings"], ["markup", "drawings"], ["drawset", "drawings"], ["spec", "specs"], ["subpackage", "submittals"], ["jphoto", "photos"], ["logsetting", "dailylog"], ["lookup", null]];
           await Promise.all(LOADS.filter(([, tool]) => !tool || can(p.id, tool)).map(([t]) => Store.load(t, p.id)));
           const sub = parts[3];
           const F = PM.forms;
@@ -478,12 +481,16 @@
               return punchList(p);
             },
             team: () => projectTeam(p),
+            photos: () => PM.photos ? PM.photos.page(p, query) : `<div class="empty">Photos module failed to load.</div>`,
             drawings: () => PM.drawings ? (sub ? PM.drawings.viewer(p, sub, query) : PM.drawings.log(p)) : `<div class="empty">Drawings module failed to load.</div>`
           }[current.tool] || (() => `<div class="empty">Unknown tool.</div>`);
         }
       } else if (parts[0] === "admin" && PM.auth) {
         current.nav = "admin";
         view = () => (isCompanyAdmin() ? PM.auth.adminPage(parts[1] || "users", parts[2]) : `<div class="empty">Only company admins can open this page.</div>`);
+      } else if (parts[0] === "manpower" && PM.people) {
+        current.nav = "manpower";
+        view = () => PM.people.page(parts[1], query);
       } else if (parts[0] === "directory") {
         current.nav = "directory";
         view = () => directory(parts[1] || "companies");
@@ -845,6 +852,7 @@
           </div>
         </div>
         <div>
+          ${PM.people ? PM.people.crewPanel(p, today(), { title: "Crew on site today" }) : ""}
           <div class="panel"><h2>Project Information</h2>
             <div class="info-grid" style="grid-template-columns:1fr">
               <div><div class="k">Address</div><div class="v">${esc([d.address, d.city, d.state].filter(Boolean).join(", ")) || "—"}</div></div>
@@ -1193,12 +1201,25 @@
           </div>
         </div>
         <div class="no-print">
+          ${PM.people ? PM.people.dailyLogPanels(p, date, list => fillCrew(p, list)) : ""}
+          ${PM.photos ? PM.photos.dayPanel(p, date) : ""}
           <div class="panel"><h2>Logs</h2>
             ${logs.length ? `<table class="list"><thead><tr><th>Date</th><th>Workers</th><th></th></tr></thead><tbody>${logs.slice(0, 40).map(l => `<tr class="click" data-href="#/p/${p.id}/dailylog/${l.data.date}" ${l.data.date === date ? 'style="background:var(--accent-soft)"' : ""}>
               <td class="nowrap"><a href="#/p/${p.id}/dailylog/${l.data.date}">${fmtDate(l.data.date)}</a></td><td>${(l.data.manpower || []).reduce((s, m) => s + (Number(m.workers) || 0), 0)}</td><td>${l.data.locked ? pill("Approved") : ""}</td></tr>`).join("")}</tbody></table>` : `<p class="muted">No logs yet.</p>`}
           </div>
         </div>
       </div>`;
+  }
+
+  // Daily log → Manpower rows from the people deployed to this project that day (one row per company)
+  function fillCrew(p, list) {
+    const form = $("#logForm");
+    if (!form || $("#saveLog").disabled) return;
+    const byCo = {};
+    list.forEach(x => { const c = Store.get(x.person.contactId); const co = (c && c.data.companyId) || ""; (byCo[co] = byCo[co] || []).push(x.person.name); });
+    const sec = LOG_SECTIONS[0];
+    Object.entries(byCo).forEach(([co, names]) => $(`[data-sec="manpower"] tbody`, form).insertAdjacentHTML("beforeend", subRowHTML(sec, { companyId: co, workers: names.length, hours: 8, notes: names.join(", ") })));
+    toast(`Added ${list.length} crew member${list.length > 1 ? "s" : ""} — review hours and save`);
   }
 
   function collectLog() {

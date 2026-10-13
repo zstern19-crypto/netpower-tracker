@@ -1293,7 +1293,7 @@
           </div>`,
         onSave: root => {
           const mode = $("input[name=scMode]:checked", root).value;
-          if (mode === "cal") { V.afterCal = thenTool || null; setTimeout(() => { V.tool = "calibrate"; syncToolbar(); updateHint(); }, 0); return true; }
+          if (mode === "cal") { V.afterCal = thenTool || null; V.poly = null; V.lasso = null; V.tool = "calibrate"; syncToolbar(); updateHint(); return true; }
           const sel = $("#scStd", root);
           const inches = Number(sel.value);
           saveScale({ ptPerFt: 72 * inches, label: sel.options[sel.selectedIndex].text }).then(ok => { if (ok && thenTool) setTool(thenTool); });
