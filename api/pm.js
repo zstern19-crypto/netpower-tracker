@@ -31,7 +31,7 @@ async function projectOf(type, projectId) {
   return punch && punch.type === "punch" ? punch.projectId : null;
 }
 
-function canSeePrivate(ctx, rec) {
+export function canSeePrivate(ctx, rec) {
   if (!PRIVATE_TYPES.includes(rec.type) || !rec.data.private) return true;
   if (ctx.can(rec.projectId, TYPE_TOOL[rec.type], "admin")) return true;
   const me = ctx.contactId;
@@ -41,7 +41,7 @@ function canSeePrivate(ctx, rec) {
     ...(d.assignees || []), ...(d.distribution || []), ...(d.workflow || []).map(w => w.contactId)].includes(me);
 }
 
-async function checkRead(ctx, type, project) {
+export async function checkRead(ctx, type, project) {
   if (type === "project" || type === "company" || type === "contact" || type === "cert") return;  // certs are filtered per user below
   if (type === "deploy" && !project) return ensure(ctx.isAdmin || ctx.projectIds.some(pid => ctx.can(pid, "manpower", "read")));
   if (type === "member" || type === "permtemplate") return ensure(ctx.isAdmin);
@@ -53,7 +53,7 @@ async function checkRead(ctx, type, project) {
 }
 
 // Write check for one record (new state) and, for updates, its stored version.
-async function checkWrite(ctx, rec, stored) {
+export async function checkWrite(ctx, rec, stored) {
   const t = rec.type;
   if (t === "user") ensure(false);
   if (t === "company" || t === "contact" || t === "member" || t === "permtemplate") return ensure(ctx.isAdmin, "Only company admins can change this");
@@ -209,6 +209,17 @@ async function handleAction(req, res, action) {
   if (action === "notifications") {
     const list = await auth.cached("notify:" + ctx.user.id, 60000, () => notify.forUser(ctx));
     return res.status(200).json({ ok: true, notifications: list });
+  }
+  // Claude connector link (per user; the secret is shown once, only its hash is stored)
+  if (action === "connectorKey") {
+    const u = ctx.user;
+    let key = null;
+    const data = { ...u.data };
+    if (b.revoke) { delete data.mcpKeyHash; delete data.mcpKeyAt; }
+    else { const k = auth.newConnectorKey(u); key = k.key; data.mcpKeyHash = k.hash; data.mcpKeyAt = new Date().toISOString(); }
+    await db.save([{ ...u, data }]);
+    auth.clearCache();
+    return res.status(200).json({ ok: true, key });
   }
   if (action === "saveProfile") {
     const u = ctx.user;

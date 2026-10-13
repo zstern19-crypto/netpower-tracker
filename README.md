@@ -17,15 +17,21 @@ to the existing base and "Table 1"). Without it, the tracker's API returns an er
 
 Modules:
 
-- **Drawings** — upload PDF drawing sets; sheets are split out and sheet numbers/titles auto-detected from the title block (review before saving); drawing log by discipline with list/thumbnail views; revisions (new uploads of an existing sheet # become the next revision); viewer with mouse-wheel zoom and drag-to-pan at any zoom; markups (pen, highlighter, line, arrow, box, revision cloud, formatted text boxes with font/size/bold/italic/underline/background/border) that can be moved, resized and edited, stay on until right-click/Esc, and are private until published; pins that link a spot on a sheet to an RFI or punch item (or create one there); "Drawing Locations" shown on linked RFIs/punch items
+- **Drawings** — upload PDF drawing sets; sheets are split out and sheet numbers/titles auto-detected from the title block (review before saving); drawing log by discipline with list/thumbnail views; revisions (new uploads of an existing sheet # become the next revision); viewer with mouse-wheel zoom and drag-to-pan at any zoom; measure distances and areas (sheet scale from a standard scale or calibrated); lasso to select many markups; markups for an RFI kept on the RFI (with "Copy to main drawing"); markups (pen, highlighter, line, arrow, box, revision cloud, formatted text boxes with font/size/bold/italic/underline/background/border) that can be moved, resized and edited, stay on until right-click/Esc, and are private until published; pins that link a spot on a sheet to an RFI or punch item (or create one there); "Drawing Locations" shown on linked RFIs/punch items
 - **Portfolio** — all projects with status, PM, schedule, contract value
 - **Company Directory** — companies and people
 - **Project Home** — open-item counts, overdue flags, "My Open Items" (ball in court), recent activity, project info and team
 - **RFIs** — Procore-style create page (rich-text question, attachments, assignees, distribution list, responsible contractor, location, private RFIs), draft/open/closed, assignees, due dates, cost/schedule impact, threaded responses with official answers, print/PDF, CSV export
-- **Submittals** — Procore-style create page (specification, number.revision, package, cost code, location, linked drawings, distribution, attachments, per-step due dates), spec section, type, sequential approval workflow, Revise & Resubmit → revisions (#1.0, #1.1…), lead time / order-by date, CSV export
+- **Submittals** — packages grouped by trade (Items / Packages tabs, trade filter); Procore-style create page (specification, number.revision, package, cost code, location, linked drawings, distribution, attachments, per-step due dates), spec section, type, sequential approval workflow, Revise & Resubmit → revisions (#1.0, #1.1…), lead time / order-by date, CSV export
 - **Daily Log** — one log per day: weather, manpower (copy from previous day), work performed, equipment, deliveries, visitors/inspections, safety, delays, notes; approve/lock; CSV export
 - **Punch List** — assignee/manager workflow (Open → Ready for Review → Closed / Work Not Accepted), priority, photos, comments, CSV export
 - **Specifications** — spec sections per project (used by submittals)
+- **Photos** — upload jobsite photos from a phone camera or computer (resized in the browser), albums, captions; photos appear on that day's daily log
+- **Manpower** (top bar) — weekly deployment board: drag people (with photo and trade) onto projects/days, drag between projects to shift them, double-booking warnings, copy last week; crew shows on project home and the daily log
+- **Certifications** (Manpower → Certifications) — OSHA etc. per person with card upload and 30-day expiry alerts
+- **Daily log reminders** — per project: work days or weekly, due time, foremen to remind, PMs to notify after a delay; shown in the 🔔 notifications
+- **Voice to text** — 🎤 on RFI subject, question and responses (browser speech recognition: Chrome, Edge, Safari)
+- **Claude connector** — user menu → Connect Claude gives each user a private link to add as a custom connector in claude.ai, so Claude can list projects/people, create and answer RFIs, create punch items and add daily log notes with that user's permissions (`api/mcp.js`, MCP Streamable HTTP)
 - **Project Directory** — project team with roles
 - **Project Management menu** — dropdown in the top bar listing the project's tools, with quick-create (⊕) links
 - Change history on every item
