@@ -57,4 +57,12 @@
   logo is `public/pm/img/netpower-logo.jpg` (taken from the owner's Procore PDF).
 - Assistant attachments use Anthropic's Files API (GA, no beta header); the browser keeps file ids signed with
   `auth.tag`, and the server refuses unsigned ones (never trust file ids from the client).
-- WhatsApp integration and Outlook Graph permission: owner said "later".
+- WhatsApp integration and Outlook Graph permission: owner said "later". Procore import: "not now".
+- Contract value (`project.data.value`) is company-admin only: stripped from project reads for others in `api/pm.js`
+  and kept from the stored record when a non-admin saves a project.
+- `changeorder` records use the `changeorders` tool. `equipment` records (MEP list) use `submittals`; the company
+  template is setting `set_meptemplate`. `api/assistant.js?action=schedules` reads schedule sheets with structured
+  output (`output_config.format`, streamed with `messages.stream().finalMessage()`); `vercel.json` gives that
+  function `maxDuration: 300`.
+- Phone layout: the top menu is a second row under the bar (`--topbar-h` = 92px under 720px). The drawing viewer
+  handles pinch/pan itself (`touch-action: none`) so the page never zooms.
