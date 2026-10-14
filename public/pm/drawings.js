@@ -1374,7 +1374,7 @@
     function syncToolbar() {
       $$("[data-tool]").forEach(b => b.classList.toggle("on", b.dataset.tool === V.tool));
       $$("[data-color]").forEach(b => b.classList.toggle("on", b.dataset.color === V.color));
-      wrap.style.touchAction = V.tool === "pan" ? "auto" : "none";
+      wrap.style.touchAction = "none";  // the app handles one-finger pan and two-finger pinch itself (so the page and toolbar never zoom)
       wrap.classList.toggle("drawing", V.tool !== "pan");
       syncCursor();
     }
@@ -1591,8 +1591,37 @@
     }
     wrap.addEventListener("mousedown", e => { if (e.button === 1) e.preventDefault(); });  // no autoscroll on middle-click
     wrap.addEventListener("contextmenu", e => { if (!e.target.closest("#dvPop")) { e.preventDefault(); stopTool(); } });
+    // ── Touch: two fingers pinch-zoom / move the drawing only (not the whole page, so the toolbar stays on screen)
+    const touches = new Set();
+    let pinch = null;
+    const tDist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const tMid = t => { const r = wrap.getBoundingClientRect(); return { x: (t[0].clientX + t[1].clientX) / 2 - r.left, y: (t[0].clientY + t[1].clientY) / 2 - r.top }; };
+    wrap.addEventListener("touchstart", e => {
+      if (e.touches.length !== 2 || !V.W) return;
+      e.preventDefault();
+      // a second finger cancels whatever the first one started
+      V.draft = null; V.lasso = null; V.pan = null;
+      if (V.drag && V.drag.moved) { V.drag.items ? V.drag.items.forEach(it => Object.assign(it.s, it.o)) : Object.assign(V.drag.s, V.drag.o); }
+      V.drag = null;
+      pinch = { d: tDist(e.touches), z: V.zoom, m: tMid(e.touches) };
+      draw();
+    }, { passive: false });
+    wrap.addEventListener("touchmove", e => {
+      if (!pinch || e.touches.length !== 2) return;
+      e.preventDefault();
+      const m = tMid(e.touches);
+      zoomAt(pinch.z * tDist(e.touches) / pinch.d, m.x, m.y);
+      wrap.scrollLeft -= m.x - pinch.m.x; wrap.scrollTop -= m.y - pinch.m.y;
+      pinch.m = m;
+    }, { passive: false });
+    wrap.addEventListener("touchend", e => { if (e.touches.length < 2) pinch = null; });
+    wrap.addEventListener("touchcancel", () => { pinch = null; });
+    // iOS Safari: stop the page-level pinch zoom while the viewer is open
+    if (!window.__npGesture) { window.__npGesture = 1; ["gesturestart", "gesturechange"].forEach(t => document.addEventListener(t, e => { if (document.body.classList.contains("viewer-mode")) e.preventDefault(); }, { passive: false })); }
+
     wrap.addEventListener("pointerdown", e => {
       if (!V.W || e.target.closest("#dvPop")) return;
+      if (e.pointerType === "touch") { touches.add(e.pointerId); if (touches.size > 1 || pinch) return; }
       if (e.button === 1 || (e.button === 0 && V.space)) { e.preventDefault(); startPan(e); return; }
       if (e.button !== 0) return;
       const pt = toPage(e);
@@ -1624,7 +1653,7 @@
         select([]);
         hidePop();
         draw();
-        if (e.pointerType === "mouse") { e.preventDefault(); startPan(e); }
+        e.preventDefault(); startPan(e);
         return;
       }
       if (!PM.me()) { setTool("pan"); return; }
@@ -1664,6 +1693,7 @@
       e.preventDefault();
     });
     wrap.addEventListener("pointermove", e => {
+      if (pinch || (e.pointerType === "touch" && touches.size > 1)) return;
       if (V.pan) {
         wrap.scrollLeft = V.pan.sl - (e.clientX - V.pan.x);
         wrap.scrollTop = V.pan.st - (e.clientY - V.pan.y);
@@ -1737,8 +1767,9 @@
       if (d.cal) { calibrateModal(Math.hypot(d.x2 - d.x1, d.y2 - d.y1)); draw(); return; }
       addShape(d);
     };
-    wrap.addEventListener("pointerup", endPointer);
-    wrap.addEventListener("pointercancel", endPointer);
+    const endTouch = e => { touches.delete(e.pointerId); };
+    wrap.addEventListener("pointerup", e => { endTouch(e); if (pinch) return; endPointer(e); });
+    wrap.addEventListener("pointercancel", e => { endTouch(e); endPointer(e); });
 
     // ── Lasso: select every one of your markups that lies completely inside the loop
     function keyPoints(s) {
@@ -1997,6 +2028,26 @@
     }
   }
 
-  PM.drawings = { review, pendingSets, log, viewer, linksPanel, rfiMarkupsPanel, detectSheet, disciplineFor, sheetsOf, currentRev };
+  // One sheet of a drawing set on its own: a 1-page PDF (keeps the text sharp), or a JPEG for very large scanned pages
+  const setBytes = new Map();
+  async function sheetPdf(rev) {
+    if (!setBytes.has(rev.fileUrl)) setBytes.set(rev.fileUrl, fetch(await fileObjectUrl(rev.fileUrl)).then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.arrayBuffer(); }));
+    const L = await PM.exporter.pdfLib();
+    const src = await L.PDFDocument.load(await setBytes.get(rev.fileUrl), { ignoreEncryption: true });
+    const out = await L.PDFDocument.create();
+    const [pg] = await out.copyPages(src, [rev.page - 1]);
+    out.addPage(pg);
+    return new Blob([await out.save()], { type: "application/pdf" });
+  }
+  async function sheetImage(rev, maxPx = 3000) {
+    const page = await (await openPdf(rev.fileUrl)).getPage(rev.page);
+    const vp1 = page.getViewport({ scale: 1 }), vp = page.getViewport({ scale: maxPx / Math.max(vp1.width, vp1.height) });
+    const c = document.createElement("canvas"); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+    const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
+    await page.render({ canvasContext: ctx, viewport: vp }).promise;
+    return new Promise(res => c.toBlob(res, "image/jpeg", 0.85));
+  }
+
+  PM.drawings = { review, pendingSets, log, viewer, linksPanel, rfiMarkupsPanel, detectSheet, disciplineFor, sheetsOf, currentRev, sheetPdf, sheetImage };
   PM.files = { upload: uploadFile, readableUrl, fileObjectUrl, deleteFiles };
 })();

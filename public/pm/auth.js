@@ -148,6 +148,18 @@
       ${tools().map(([id, label]) => `<tr><td>${esc(label)}</td>${LEVELS.map(l => `<td><input type="radio" name="${name}_${id}" value="${l}" ${(perms[id] || "none") === l ? "checked" : ""} ${disabled ? "disabled" : ""} aria-label="${esc(label)}: ${LEVEL_LABEL[l]}"></td>`).join("")}</tr>`).join("")}
     </tbody></table></div>`;
   }
+  // Clicking a circle that's already filled clears it (back to "None"), so a mistake can be undone
+  let wasChecked = null;
+  document.addEventListener("pointerdown", e => { const r = e.target.closest && e.target.closest(".perm-matrix input[type=radio]"); wasChecked = r && r.checked ? r : null; }, true);
+  document.addEventListener("click", e => {
+    const r = e.target.closest && e.target.closest(".perm-matrix input[type=radio]");
+    if (!r || r.disabled || r !== wasChecked) return;
+    wasChecked = null;
+    const none = r.value === "none" ? null : $(`input[name="${r.name}"][value="none"]`, r.closest("table"));
+    r.checked = false;
+    if (none) { none.checked = true; none.dispatchEvent(new Event("change", { bubbles: true })); }
+    else r.dispatchEvent(new Event("change", { bubbles: true }));
+  });
   function readMatrix(root, name) {
     return Object.fromEntries(tools().map(([id]) => {
       const el = $(`input[name="${name}_${id}"]:checked`, root);
@@ -288,7 +300,7 @@
   // ───────────────────────── Project permissions ─────────────────────────
   async function projectPermissions(p) {
     await Promise.all([Store.load("member", p.id), Store.load("permtemplate")]);
-    const users = await loadUsers();
+    const users = await loadUsers(true);  // fresh, so people just added under Users can be added here
     const tpls = Store.all("permtemplate").sort((a, b) => a.data.name.localeCompare(b.data.name));
     const members = Store.all("member", p.id).map(m => ({ m, u: users.find(u => u.id === m.data.userId) })).filter(x => x.u)
       .sort((a, b) => a.u.name.localeCompare(b.u.name));

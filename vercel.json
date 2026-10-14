@@ -1,9 +1,26 @@
 {
   "outputDirectory": "public",
+  "functions": {
+    "api/assistant.js": {
+      "maxDuration": 300
+    }
+  },
   "rewrites": [
-    { "source": "/api/:path*", "destination": "/api/:path*" },
-    { "source": "/pm", "destination": "/pm/index.html" },
-    { "source": "/pm/", "destination": "/pm/index.html" },
-    { "source": "/((?!pm/).*)", "destination": "/index.html" }
+    {
+      "source": "/api/:path*",
+      "destination": "/api/:path*"
+    },
+    {
+      "source": "/pm",
+      "destination": "/pm/index.html"
+    },
+    {
+      "source": "/pm/",
+      "destination": "/pm/index.html"
+    },
+    {
+      "source": "/((?!pm/).*)",
+      "destination": "/index.html"
+    }
   ]
 }

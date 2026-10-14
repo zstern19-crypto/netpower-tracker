@@ -8,6 +8,9 @@
 //        A photo or PDF for the next question. Stored with Anthropic's Files API (expires after 7 days); the
 //        browser gets the file id plus a signature and sends both back — file ids without a valid signature
 //        for this user are refused, so nobody can reference someone else's file.
+//   POST /api/assistant?action=schedules  { projectId, files: [{ fileId, name }], fileSigs }  → { items, usage }
+//        Reads the equipment schedules on mechanical / plumbing sheets (uploaded with action=upload) and returns
+//        one row per piece of equipment, for the project's Equipment list. Needs Submittals "standard" on the project.
 //
 // The browser keeps the conversation (including Claude's thinking blocks, unchanged) and sends it back each turn;
 // the system prompt and tools never change, so history stays valid and the prompt cache stays warm.
@@ -79,6 +82,62 @@ function body(req) {
   try { return JSON.parse(req.body || "{}"); } catch (e) { return {}; }
 }
 
+// ── Equipment schedules → rows (structured output, so the result is always valid JSON)
+const EQUIP_TRADES = ["Mechanical", "Plumbing", "Fire Protection", "Electrical", "Other"];
+const EQUIP_SCHEMA = {
+  type: "object", additionalProperties: false, required: ["items"],
+  properties: { items: { type: "array", items: {
+    type: "object", additionalProperties: false,
+    required: ["tag", "description", "trade", "manufacturer", "model", "quantity", "electrical", "location", "sheet", "notes"],
+    properties: {
+      tag: { type: "string", description: "Equipment mark / tag exactly as in the schedule, e.g. RTU-1, EF-3, WH-1" },
+      description: { type: "string", description: "What it is, e.g. Rooftop unit, Exhaust fan, Gas water heater" },
+      trade: { type: "string", enum: EQUIP_TRADES },
+      manufacturer: { type: "string" }, model: { type: "string" },
+      quantity: { type: "string", description: "Quantity if the schedule gives one, else empty" },
+      electrical: { type: "string", description: "Electrical data as written: volts/phase, HP or kW, FLA/MCA/MOCP, disconnect or starter notes" },
+      location: { type: "string", description: "Area / floor / room served or located, if given" },
+      sheet: { type: "string", description: "Sheet number the schedule is on" },
+      notes: { type: "string", description: "Anything an electrical contractor should know (e.g. 'by Div 26', 'VFD furnished by mech'); else empty" }
+    } } } }
+};
+async function readSchedules(ctx, st, b, res) {
+  const pid = String(b.projectId || "");
+  auth.ensure(db.ID_RE.test(pid) && ctx.can(pid, "submittals", "standard"), "You need Submittals access on this project");
+  const files = (Array.isArray(b.files) ? b.files : []).slice(0, 12);
+  if (!files.length) throw auth.httpError(400, "Pick at least one sheet");
+  const blocks = files.map(f => (/\.pdf$/i.test(String(f.name || "")) ? { type: "document", source: { type: "file", file_id: String(f.fileId || "") }, title: String(f.name).slice(0, 120) }
+    : { type: "image", source: { type: "file", file_id: String(f.fileId || "") } }));
+  checkFiles(ctx, [{ role: "user", content: blocks }], b.fileSigs || {});
+  const used = await usage();
+  if (used.costUsd >= st.capUsd) throw auth.httpError(402, `This month's AI limit ($${st.capUsd}) has been reached. A company admin can raise it in the assistant settings.`, "CAP_REACHED");
+  // streamed (the SDK requires it for long answers); we only need the final message
+  const response = await new Anthropic().messages.stream({
+    model: MODEL,
+    max_tokens: 32000,
+    output_config: { effort: "medium", format: { type: "json_schema", schema: EQUIP_SCHEMA } },
+    messages: [{ role: "user", content: [...blocks, { type: "text", text:
+      `These are mechanical and plumbing drawing sheets (${files.map(f => String(f.name || "").slice(0, 80)).join(", ")}). Find every equipment schedule on them and list each piece of equipment once (one row per tag; if a row covers several tags like EF-1 thru EF-4, list each tag). ` +
+      `We are the electrical contractor and use this list to track submittals and power connections, so copy the electrical data exactly as written. Leave a field empty when the schedule doesn't give it — don't guess. Skip notes, legends and fixture/diffuser schedules that aren't equipment (grilles, registers, plumbing fixtures like sinks and toilets).` }] }]
+  }).finalMessage();
+  const cost = costOf(response.model, response.usage || {});
+  await recordSpend(ctx, cost);
+  if (response.stop_reason === "refusal") throw auth.httpError(422, "The AI couldn't read these sheets.");
+  const text = response.content.filter(x => x.type === "text").map(x => x.text).join("");
+  let items = [];
+  try { items = JSON.parse(text).items || []; } catch (e) { throw auth.httpError(502, response.stop_reason === "max_tokens" ? "Too much equipment in one go — pick fewer sheets and try again." : "The AI's answer couldn't be read — try again."); }
+  items = items.filter(x => x && (x.tag || x.description)).slice(0, 500);
+  return res.status(200).json({ ok: true, items, usage: { costUsd: Math.round(cost * 10000) / 10000 } });
+}
+async function recordSpend(ctx, cost) {
+  const fresh = await usage();
+  const by = { ...(fresh.byUser || {}) };
+  by[ctx.user.id] = { name: ctx.user.data.name, costUsd: ((by[ctx.user.id] || {}).costUsd || 0) + cost, requests: ((by[ctx.user.id] || {}).requests || 0) + 1 };
+  const next = { month: month(), costUsd: (fresh.costUsd || 0) + cost, requests: (fresh.requests || 0) + 1, byUser: by, updatedAt: new Date().toISOString() };
+  await db.save([{ id: usageId(), type: "aiusage", projectId: "", data: next }], await db.getMany([usageId()]));
+  return next;
+}
+
 export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
   try {
@@ -116,6 +175,8 @@ export default async function handler(req, res) {
       const up = await new Anthropic().files.upload({ file: await toFile(buf, name, { type }), expires_in_seconds: 7 * 24 * 3600 });
       return res.status(200).json({ ok: true, fileId: up.id, kind, name, sig: fileSig(ctx, up.id) });
     }
+
+    if (req.query && req.query.action === "schedules") return await readSchedules(ctx, st, b, res);
 
     const text = String(b.text || "").trim().slice(0, 4000);
     const files = (Array.isArray(b.files) ? b.files : []).slice(0, 10);
@@ -187,11 +248,7 @@ export default async function handler(req, res) {
     }
 
     // Record spend (read-modify-write; small races only make the total slightly low)
-    const fresh = await usage();
-    const by = { ...(fresh.byUser || {}) };
-    by[ctx.user.id] = { name: ctx.user.data.name, costUsd: ((by[ctx.user.id] || {}).costUsd || 0) + cost, requests: ((by[ctx.user.id] || {}).requests || 0) + 1 };
-    const next = { month: month(), costUsd: (fresh.costUsd || 0) + cost, requests: (fresh.requests || 0) + 1, byUser: by, updatedAt: new Date().toISOString() };
-    await db.save([{ id: usageId(), type: "aiusage", projectId: "", data: next }], await db.getMany([usageId()]));
+    const next = await recordSpend(ctx, cost);
 
     return res.status(200).json({ ok: true, messages, reply, actions, stopped,
       usage: { costUsd: Math.round(cost * 10000) / 10000, monthCostUsd: Math.round(next.costUsd * 100) / 100, capUsd: st.capUsd } });
