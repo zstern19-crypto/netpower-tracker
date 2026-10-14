@@ -12,8 +12,8 @@
   const order = (a, b) => (a.data.status === "Done") - (b.data.status === "Done") || String(a.data.due || "9999").localeCompare(String(b.data.due || "9999")) || (b.data.priority === "High") - (a.data.priority === "High") || a.data.number - b.data.number;
   const late = d => d.status !== "Done" && d.due && d.due < PM.today();
 
-  function editTask(p, rec) {
-    const d = rec ? rec.data : { status: "Open", priority: "Normal" };
+  function editTask(p, rec, preset) {
+    const d = rec ? rec.data : { status: "Open", priority: "Normal", ...(preset || {}) };
     PM.openModal({
       title: rec ? `Task #${d.number}` : "New Task",
       body: `<div class="form-grid">
@@ -82,14 +82,28 @@
         ${list.map(r => row(r, p, false)).join("")}</tbody></table></div>` : `<div class="empty">No tasks here. ${PM.can(p.id, "tasks", "standard") ? "Add one, or ask ✦ Ask AI: “Add a task on this job for Hugo to pull feeders by Friday”." : ""}</div>`}</div>`;
   }
 
-  // "My Tasks": everything assigned to me (or that I created) across projects
+  // "+ Add Task" from My Tasks: pick the job, then the usual task form (assigned to me unless changed)
+  function addFromMyTasks() {
+    const projects = Store.all("project").filter(p => p.data.status !== "Archived" && PM.can(p.id, "tasks", "standard")).sort((a, b) => a.data.name.localeCompare(b.data.name));
+    if (!projects.length) { toast("You can't add tasks on any project", true); return; }
+    PM.openModal({
+      title: "Add Task", saveLabel: "Next", noRender: true,
+      body: `<div class="field"><label for="tkProj">Job</label><select id="tkProj">${projects.map(p => `<option value="${p.id}">${esc(p.data.name)}</option>`).join("")}</select></div>`,
+      onSave: root => { const p = Store.get($("#tkProj", root).value); setTimeout(() => editTask(p, null, { assigneeId: PM.me() || "" }), 0); return true; }
+    });
+  }
+
+  // "My Tasks": everything assigned to me (or that I created) across projects, plus Job Tracker steps in my court
   async function myTasks() {
-    await Store.load("task");
+    await Store.load("task");   // one request for all projects (fewer database calls)
     const me = PM.me();
+    const court = PM.jobs && me ? await PM.jobs.inCourt(me) : [];
     const mine = Store.all("task").filter(r => r.data.status !== "Done" && (r.data.assigneeId === me || (!r.data.assigneeId && r.data.createdById === me))).sort(order);
     const projects = Store.all("project");
-    setTimeout(() => wire(), 0);
-    return `<div class="page-head"><h1>My Tasks</h1><span class="sub">${mine.length} open</span></div>
+    setTimeout(() => { wire(); const a = $("#tkAddMine"); if (a) a.onclick = addFromMyTasks; }, 0);
+    return `<div class="page-head"><h1>My Tasks</h1><span class="sub">${mine.length} open</span>
+        <div class="actions"><button class="btn primary" id="tkAddMine">+ Add Task</button></div></div>
+      ${court.length ? `<div class="panel"><h2>Ball in your court — Job Tracker</h2>${court.map(c => `<div style="padding:3px 0"><a href="#/jobs/${c.projectId}"><strong>${esc(c.step)}</strong></a> — ${esc((projects.find(p => p.id === c.projectId) || { data: { name: "" } }).data.name)}${c.v.date ? ` <span class="${c.v.date < PM.today() ? "overdue" : "muted"}">· ${esc(PM.fmtDate(c.v.date))}</span>` : ""}${c.v.note ? ` <span class="muted">· ${esc(c.v.note)}</span>` : ""}</div>`).join("")}</div>` : ""}
       <div class="panel flush">${mine.length ? `<div class="table-wrap"><table class="list tk-list"><thead><tr><th></th><th>Task</th><th>Project</th><th>Assigned to</th><th>Due</th><th>Status</th></tr></thead><tbody>
         ${mine.map(r => row(r, projects.find(p => p.id === r.projectId), true)).join("")}</tbody></table></div>` : `<div class="empty">Nothing assigned to you. 🎉</div>`}</div>`;
   }

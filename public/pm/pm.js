@@ -607,12 +607,17 @@
     { k: "description", label: "Description", type: "textarea" }
   ];
 
+  // Project numbers continue in order: next = highest plain number + 1
+  function nextProjectNumber() {
+    const nums = Store.all("project").map(p => String(p.data.number || "").trim()).filter(n => /^\d+$/.test(n)).map(Number);
+    return nums.length ? Math.max(...nums) + 1 : "";
+  }
   function editProject(p) {
     const isNew = !p;
     const fields = isCompanyAdmin() ? PROJECT_FIELDS : PROJECT_FIELDS.filter(f => f.k !== "value");  // contract value: company admins only
     openModal({
       title: isNew ? "New Project" : "Edit Project",
-      body: formHTML(fields, p ? p.data : { status: "Active" }),
+      body: formHTML(fields, p ? p.data : { status: "Active", number: nextProjectNumber() }),
       saveLabel: isNew ? "Create Project" : "Save",
       onSave: async root => {
         const vals = readForm(root, fields);
@@ -636,18 +641,39 @@
     title: "Add several projects",
     saveLabel: "Add projects",
     body: `<div class="field"><label for="bpNames">Project names — one per line</label><textarea id="bpNames" rows="8" placeholder="16 Convent Ave&#10;2 Mimi Ct"></textarea></div>
+      <div class="field"><label for="bpFirst">Number the first one</label><input id="bpFirst" type="number" min="1" value="${nextProjectNumber()}" placeholder="e.g. 554" style="width:140px"><div class="muted help">The rest count up from there. Leave empty for no numbers.</div></div>
       <div class="field"><label for="bpStatus">Status</label><select id="bpStatus">${PROJECT_STATUSES.map(x => `<option ${x === "Active" ? "selected" : ""}>${x}</option>`).join("")}</select></div>
       <p class="muted" style="font-size:13px">Names that already exist are skipped. Add addresses and the rest later with “Edit Project”.</p>`,
     onSave: async root => {
       const have = new Set(Store.all("project").map(p => p.data.name.trim().toLowerCase()));
       const names = pasteLines($("#bpNames", root).value).filter(n => !have.has(n.toLowerCase()));
       if (!names.length) { toast("Nothing new to add", true); return false; }
-      const now = new Date().toISOString(), status = $("#bpStatus", root).value;
-      try { await Store.saveMany(names.map(name => withHistory({ id: uid("prj"), type: "project", projectId: "", data: { name, status, team: [], createdAt: now, createdBy: meName() } }, "Project created"))); }
+      const now = new Date().toISOString(), status = $("#bpStatus", root).value, first = $("#bpFirst", root).value.trim();
+      const taken = new Set(Store.all("project").map(p => String(p.data.number || "").trim()));
+      let n = first ? Number(first) : 0;
+      const nextFree = () => { while (taken.has(String(n))) n++; taken.add(String(n)); return String(n++); };
+      try { await Store.saveMany(names.map(name => withHistory({ id: uid("prj"), type: "project", projectId: "", data: { name, number: first ? nextFree() : "", status, team: [], createdAt: now, createdBy: meName() } }, "Project created"))); }
       catch (e) { toast("Not saved: " + e.message, true); return false; }
       toast(`${names.length} project${names.length === 1 ? "" : "s"} added`);
     }
   });
+  ACTIONS.numberProjects = () => {
+    const missing = Store.all("project").filter(p => !String(p.data.number || "").trim()).sort((a, b) => String(a.data.createdAt || "").localeCompare(String(b.data.createdAt || "")) || a.data.name.localeCompare(b.data.name));
+    openModal({
+      title: "Number projects",
+      saveLabel: "Number them",
+      body: `<p style="margin-top:0">${missing.length} project${missing.length === 1 ? "" : "s"} without a number: ${missing.map(p => esc(p.data.name)).join(", ")}.</p>
+        <div class="field"><label for="npFirst">Start at</label><input id="npFirst" type="number" min="1" value="${nextProjectNumber() || 1}" style="width:140px"><div class="muted help">Numbered in the order they were created.</div></div>`,
+      onSave: async root => {
+        const taken = new Set(Store.all("project").map(p => String(p.data.number || "").trim()));
+        let n = Number($("#npFirst", root).value);
+        if (!(n >= 1)) { toast("Enter a starting number", true); return false; }
+        const recs = missing.map(p => { while (taken.has(String(n))) n++; taken.add(String(n)); return withHistory({ ...p, data: { ...p.data, number: String(n++) } }, "Project number set"); });
+        try { await Store.saveMany(recs); } catch (e) { toast("Not saved: " + e.message, true); return false; }
+        toast("Projects numbered");
+      }
+    });
+  };
   ACTIONS.bulkPeople = () => {
     const own = companies().find(c => /net\s*power/i.test(c.data.name));
     openModal({
@@ -697,7 +723,7 @@
     const totalValue = all.filter(p => p.data.status === "Active").reduce((s, p) => s + (Number(p.data.value) || 0), 0);
     return `
       <div class="page-head"><h1>Portfolio</h1><span class="sub">${all.length} project${all.length === 1 ? "" : "s"}</span>
-        <div class="actions"><button class="btn" data-perm="company:admin" data-act="bulkProjects">Add several…</button><button class="btn primary" data-perm="company:admin" data-act="newProject">+ Create Project</button></div></div>
+        <div class="actions">${isCompanyAdmin() && all.some(p => !String(p.data.number || "").trim()) ? `<button class="btn" data-act="numberProjects">Number projects</button>` : ""}<button class="btn" data-perm="company:admin" data-act="bulkProjects">Add several…</button><button class="btn primary" data-perm="company:admin" data-act="newProject">+ Create Project</button></div></div>
       ${PM.jobs ? `<div class="tabs"><a href="#/" class="on">Projects</a><a href="#/jobs">Job Tracker</a></div>` : ""}
       ${isCompanyAdmin() ? `<div class="cards">
         <div class="card"><div class="num">${by("Active")}</div><div class="lbl">Active projects</div></div>
@@ -1302,12 +1328,15 @@
           <a class="btn" href="#/p/${p.id}/dailylog/${today()}">Today</a>
           <button class="btn" data-act="exportLogs" data-project="${p.id}">Export CSV</button>
           <button class="btn" onclick="window.print()">Print / PDF</button>
+          <button class="btn primary" data-perm="dailylog:standard" data-act="newLog" data-project="${p.id}">+ New Daily Log</button>
         </div></div>
       <div class="grid cols-2">
         <div id="logForm">
           <div class="panel"><div class="section-head"><h2 style="margin:0">${new Date(date + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</h2>
             ${rec ? `<span class="muted">Last saved ${fmtDateTime(d.updatedAt)}${d.updatedBy ? " by " + esc(d.updatedBy) : ""}</span>` : `<span class="muted">Not started</span>`}</div>
             ${d.locked ? `<p>${pill("Approved")} This log was approved by ${esc(d.lockedBy || "")} on ${fmtDateTime(d.lockedAt)}. Unlock to edit.</p>` : ""}
+            ${rec ? "" : `<div class="log-start no-print" data-perm="dailylog:standard"><strong>No daily log for this day yet.</strong> Fill in the sections below (manpower, work performed, notes…) and press <strong>Save Daily Log</strong> — that creates it.
+              <div style="margin-top:8px"><button class="btn primary small" id="logStart">Start this day's log</button></div></div>`}
           </div>
           ${LOG_SECTIONS.map(sec => `<div class="panel" data-sec="${sec.k}">
             <div class="section-head"><h2 style="margin:0">${sec.title}</h2>
@@ -1359,6 +1388,13 @@
     if (!form) return;
     const rec = Store.get(logId(p, date));
     const locked = rec && rec.data.locked;
+    const start = $("#logStart");
+    if (start) start.onclick = () => {   // open the manpower section with a first row ready to type in
+      const sec = $('[data-sec="manpower"]', form);
+      if (sec && !$("tbody tr", sec)) { const add = $("[data-addrow=manpower]", sec); if (add) add.click(); }
+      sec.scrollIntoView({ behavior: "smooth", block: "start" });
+      setTimeout(() => { const i = $('[data-sec="manpower"] tbody input', form); if (i) i.focus(); }, 300);
+    };
     $("#logDate").onchange = e => { if (e.target.value) location.hash = `#/p/${p.id}/dailylog/${e.target.value}`; };
     form.addEventListener("click", e => {
       const add = e.target.closest("[data-addrow]");
@@ -1393,6 +1429,17 @@
     };
   }
 
+  ACTIONS.newLog = el => {
+    const p = Store.get(el.dataset.project);
+    openModal({
+      title: "New Daily Log",
+      saveLabel: "Open log",
+      noRender: true,
+      body: `<div class="field"><label for="nlDate">Date</label><input id="nlDate" type="date" value="${today()}" max="${addDays(today(), 7)}"></div>
+        <p class="muted" style="font-size:13px">Opens that day's log; fill it in and press Save Daily Log.</p>`,
+      onSave: root => { const d = $("#nlDate", root).value; if (!d) { toast("Pick a date", true); return false; } location.hash = `#/p/${p.id}/dailylog/${d}`; setTimeout(() => { const b = $("#logStart"); if (b) b.click(); }, 400); return true; }
+    });
+  };
   ACTIONS.exportLogs = el => {
     const p = Store.get(el.dataset.project);
     const rows = [["Date", "Total Workers", "Man-hours", "Manpower Detail", "Work Performed", "Deliveries", "Safety", "Delays", "Notes", "Approved"]];
