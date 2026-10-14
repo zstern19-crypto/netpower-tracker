@@ -612,3 +612,8 @@ details.fold[open] > summary { margin-bottom: 10px; }
 .tk-check input { width: 18px; height: 18px; }
 .tk-list tr.tk-done td:not(.tk-check) { color: var(--muted); }
 .tk-list tr.tk-done a { text-decoration: line-through; color: var(--muted); }
+.log-start { margin-top: 10px; padding: 10px 12px; background: #fff3ec; border: 1px solid #f7c9ad; border-radius: 8px; }
+.mp-multi { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0 8px; font-size: 12px; }
+.mp-sel { width: 18px; height: 18px; flex: none; }
+.ai-filled { background: #fff8e6 !important; border-color: #f2c14e !important; }
+.jt-bic { position: absolute; bottom: 2px; right: 3px; font-size: 10px; font-weight: 700; background: #1d63c9; color: #fff; border-radius: 8px; padding: 0 4px; line-height: 14px; }

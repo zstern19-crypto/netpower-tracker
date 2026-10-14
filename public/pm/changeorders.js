@@ -34,7 +34,7 @@
           <div class="field"><label for="coApproved">Date approved / rejected</label><input id="coApproved" type="date" value="${esc(d.decided || "")}"></div>
           <div class="field full"><label>Related RFIs</label><div class="checks">${rfis.map(r => `<label><input type="checkbox" name="coRfi" value="${r.id}" ${(d.rfis || []).includes(r.id) ? "checked" : ""}> RFI #${esc(r.data.number)} ${esc(r.data.subject || "")}</label>`).join("") || `<span class="muted">No RFIs on this project.</span>`}</div></div>
           <div class="field full"><label for="coDesc">Description / scope</label><textarea id="coDesc" rows="5">${esc(d.description || "")}</textarea></div>
-          <div class="field full"><label>Files (quote, backup, signed CO)</label><div id="coFiles"></div><input type="file" id="coUpload" multiple></div>
+          <div class="field full"><label>Files (quote, backup, signed CO) — add the CO / proposal PDF and Claude fills in the fields</label><div id="coFiles"></div><input type="file" id="coUpload" multiple><div class="muted" id="coAiMsg" style="font-size:13px;margin-top:4px"></div></div>
         </div>`,
       onOpen: root => {
         drawFiles(root);
@@ -45,13 +45,28 @@
             try { files.push({ name: file.name, url: await PM.files.upload(`attachments/${p.id}/changeorders`, file), type: file.type, size: file.size }); }
             catch (err) { toast("Upload failed: " + err.message, true); }
           }
+          const picked = [...e.target.files];
           e.target.value = ""; drawFiles(root);
+          // Fill in the empty fields from the first PDF / photo (Claude reads it)
+          const doc = picked.find(readable);
+          if (!doc) return;
+          const msg = $("#coAiMsg", root), why = await aiStatus();
+          if (why) { msg.textContent = why; return; }
+          msg.textContent = "✦ Reading " + doc.name + "…";
+          try {
+            const c = await aiRead(p, doc);
+            const fill = (id, val) => { const el = $("#" + id, root); if (el && !el.value.trim() && val !== "" && val != null) { el.value = val; el.classList.add("ai-filled"); } };
+            fill("coTitle", c.title); fill("coAmount", typeof c.amount === "number" ? c.amount : "");
+            fill("coSubmitted", /^\d{4}-\d{2}-\d{2}$/.test(c.submitted || "") ? c.submitted : ""); fill("coDesc", aiDescription(c));
+            msg.textContent = c.isChangeOrder === false ? "✦ This doesn't look like a change order — check the fields." : "✦ Filled in from " + doc.name + " — check the highlighted fields.";
+          } catch (err) { msg.textContent = "Couldn't read it: " + err.message; }
         };
       },
       onSave: async root => {
         const v = id => $("#" + id, root).value.trim();
         const num = v => (v === "" ? "" : Number(v));
-        if (!v("coTitle")) { toast("Enter a title", true); return false; }
+        if (!v("coTitle") && files.length) $("#coTitle", root).value = files[0].name.replace(/\.[a-z0-9]+$/i, "");
+        if (!v("coTitle")) { toast("Enter a title (or attach the change order PDF)", true); return false; }
         const number = Number(v("coNum"));
         if (!(number >= 1)) { toast("Enter a number", true); return false; }
         if (Store.all("changeorder", p.id).some(x => x.id !== (rec && rec.id) && Number(x.data.number) === number)) { toast(`CO #${number} already exists`, true); return false; }
@@ -95,8 +110,29 @@
   // ── Drop a change order / proposal PDF: Claude reads it and a Draft CO is created with the PDF attached
   const toB64 = async blob => { const a = new Uint8Array(await blob.arrayBuffer()); let s = ""; for (let i = 0; i < a.length; i += 0x8000) s += String.fromCharCode.apply(null, a.subarray(i, i + 0x8000)); return btoa(s); };
   let reading = false;
+  const readable = file => /pdf/i.test(file.type) || /\.pdf$/i.test(file.name) || /^image\/(jpeg|png|webp|gif)$/.test(file.type);
+  // Send the file to Claude and get the change order fields back
+  async function aiRead(p, file) {
+    if (file.size > 3 * 1024 * 1024) throw new Error("the file is over 3 MB — too big for the AI to read");
+    const isPdf = /pdf/i.test(file.type) || /\.pdf$/i.test(file.name);
+    const up = await PM.api("/api/assistant?action=upload", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: file.name, type: isPdf ? "application/pdf" : file.type, data: await toB64(file) }) });
+    const d = await PM.api("/api/assistant?action=changeorder", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectId: p.id, file: { fileId: up.fileId, name: up.name }, fileSigs: { [up.fileId]: up.sig } }) });
+    return d.changeOrder || {};
+  }
+  const aiDescription = c => [c.documentNumber ? `Document #: ${c.documentNumber}` : "", c.description || ""].filter(Boolean).join("\n\n");
+  let aiAllowed = null;   // AI reading needs the assistant (same access + monthly limit)
+  async function aiStatus() {
+    if (aiAllowed !== null) return aiAllowed;
+    const st = PM.assistant && PM.session ? await PM.assistant.refreshStatus() : null;
+    aiAllowed = st ? (st.allowed ? "" : !st.configured ? "AI reading isn't set up (the ANTHROPIC_API_KEY setting is missing in Vercel)." : "AI reading is limited to company admins — change it in ✦ Ask AI → Settings.") : "AI reading needs the online version (not demo mode).";
+    return aiAllowed;
+  }
+
   async function fromPdf(p, file) {
     if (reading) return;
+    const why = await aiStatus();
+    if (why) { toast(why, true); return; }
     const isPdf = /pdf/i.test(file.type) || /\.pdf$/i.test(file.name), isImg = /^image\/(jpeg|png|webp|gif)$/.test(file.type);
     if (!isPdf && !isImg) { toast("Drop a PDF (or a photo of the change order)", true); return; }
     if (file.size > 3 * 1024 * 1024) { toast("That file is over 3 MB — too big for the AI. Create the change order by hand and attach it.", true); return; }
@@ -104,19 +140,13 @@
     const box = $("#coDrop"); if (box) box.classList.add("busy");
     toast("Reading " + file.name + "…");
     try {
-      const [up, url] = await Promise.all([
-        PM.api("/api/assistant?action=upload", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: file.name, type: isPdf ? "application/pdf" : file.type, data: await toB64(file) }) }),
-        PM.files.upload(`attachments/${p.id}/changeorders`, file)
-      ]);
-      const d = await PM.api("/api/assistant?action=changeorder", { method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ projectId: p.id, file: { fileId: up.fileId, name: up.name }, fileSigs: { [up.fileId]: up.sig } }) });
-      const c = d.changeOrder || {};
+      const [c, url] = await Promise.all([aiRead(p, file), PM.files.upload(`attachments/${p.id}/changeorders`, file)]);
       if (c.isChangeOrder === false && !window.confirm("This doesn't look like a change order or proposal. Create one from it anyway?")) { PM.files.deleteFiles([url]).catch(() => {}); return; }
       const number = PM.nextNumber("changeorder", p.id);
       const rec = PM.withHistory({ id: PM.uid("co"), type: "changeorder", projectId: p.id, data: {
         number, title: c.title || file.name.replace(/\.[a-z]+$/i, ""), status: "Draft", amount: typeof c.amount === "number" ? c.amount : "",
         submitted: /^\d{4}-\d{2}-\d{2}$/.test(c.submitted || "") ? c.submitted : "", rfis: [],
-        description: [c.documentNumber ? `Document #: ${c.documentNumber}` : "", c.description || ""].filter(Boolean).join("\n\n"),
+        description: aiDescription(c),
         attachments: [{ name: file.name, url, type: file.type, size: file.size }], fromPdf: true, createdBy: PM.meName(), createdAt: new Date().toISOString() } }, `Created from ${file.name} (read by AI)`);
       if (!(await PM.saveRec(rec, `CO #${number} created from the PDF — check the details`))) return;
       location.hash = `#/p/${p.id}/changeorders/${rec.id}`;
@@ -131,8 +161,7 @@
     const approved = sum(recs.filter(r => r.data.status === "Approved")), pending = sum(recs.filter(r => r.data.status === "Pending")), draft = sum(recs.filter(r => r.data.status === "Draft"));
     const canEdit = PM.can(p.id, "changeorders", "standard");
     const showContract = PM.isCompanyAdmin() && Number(p.data.value);
-    const st = canEdit && PM.assistant && PM.session ? await PM.assistant.refreshStatus() : null;
-    const aiOk = !!(st && st.allowed);
+    const why = canEdit ? await aiStatus() : "";
     setTimeout(() => {
       const add = $("#coAdd"); if (add) add.onclick = () => editCO(p, null);
       const csv = $("#coCsv"); if (csv) csv.onclick = () => exportCSV(p);
@@ -153,8 +182,8 @@
         <div class="card"><div class="num">${money(draft)}</div><div class="lbl">Draft (${recs.filter(r => r.data.status === "Draft").length})</div></div>
         ${showContract ? `<div class="card"><div class="num">${money(Number(p.data.value) + approved)}</div><div class="lbl">Revised contract (original ${money(Number(p.data.value))})</div></div>` : ""}
       </div>
-      ${aiOk ? `<label class="co-drop" id="coDrop"><input type="file" id="coPdf" accept="application/pdf,image/*" hidden>
-        <strong>📄 Drop a change order or proposal PDF here</strong> <span class="muted">— or click to pick one. Claude reads it and creates the change order for you to check.</span></label>` : ""}
+      ${canEdit ? `<label class="co-drop" id="coDrop"><input type="file" id="coPdf" accept="application/pdf,image/*" hidden>
+        <strong>📄 Drop a change order or proposal PDF here</strong> <span class="muted">— or click to pick one. Claude reads it and creates the change order for you to check.</span>${why ? `<div class="field-err" style="display:block;margin-top:4px">${esc(why)}</div>` : ""}</label>` : ""}
       <div class="panel flush"><div class="toolbar"><select id="coFilter" aria-label="Status"><option value="">All statuses</option>${STATUSES.map(s => `<option ${view === s ? "selected" : ""}>${s}</option>`).join("")}</select></div>
         ${shown.length ? `<div class="table-wrap"><table class="list"><thead><tr><th>#</th><th>Title</th><th>Status</th><th class="num">Amount</th><th>Submitted</th><th>Reminder</th></tr></thead><tbody>
           ${shown.map(r => { const d = r.data; const late = open(d) && d.remindAt && d.remindAt <= PM.today(); return `<tr class="click" data-href="#/p/${p.id}/changeorders/${r.id}">

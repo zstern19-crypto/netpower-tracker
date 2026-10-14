@@ -33,10 +33,11 @@
     const id = statusId(p.id), cur = Store.get(id);
     const prev = (cur && cur.data.steps) || {};
     const step = steps().find(s => s.id === stepId);
-    const next = { ...prev, [stepId]: { ...val, by: PM.meName(), at: new Date().toISOString() } };
-    if (!val.state && !val.date && !val.note) delete next[stepId];
+    const next = { ...prev, [stepId]: { ...val, stepName: step ? step.name : "", by: PM.meName(), at: new Date().toISOString() } };
+    if (!val.state && !val.date && !val.note && !val.bic) delete next[stepId];
+    if ((prev[stepId] || {}).bic !== val.bic && val.bic) next[stepId].bicAt = new Date().toISOString();
     const rec = PM.withHistory({ id, type: "jobstatus", projectId: p.id, data: { ...(cur ? cur.data : {}), steps: next } },
-      `${step ? step.name : stepId}: ${LABEL[val.state || ""]}${val.date ? " (" + PM.fmtDate(val.date) + ")" : ""}`);
+      `${step ? step.name : stepId}: ${LABEL[val.state || ""]}${val.date ? " (" + PM.fmtDate(val.date) + ")" : ""}${val.bic && (prev[stepId] || {}).bic !== val.bic ? " — ball in court: " + PM.contactName(val.bic) : ""}`);
     return PM.saveRec(rec, "Saved");
   }
 
@@ -45,11 +46,13 @@
     PM.openModal({
       title: `${s.name} — ${p.data.name}`,
       body: `<div class="field"><label>Status</label><div class="radio-list jt-states">${STATES.map(([k, l]) => `<label><input type="radio" name="jtState" value="${k}" ${(v.state || "") === k ? "checked" : ""}> <span class="jt-dot jt-${k || "none"}"></span> ${l}</label>`).join("")}</div></div>
+        <div class="field"><label for="jtBic">Ball in court <span class="muted">(who has to act on it now)</span></label><select id="jtBic"><option value="">— nobody —</option>${PM.contacts().slice().sort((a, b) => a.data.name.localeCompare(b.data.name)).map(c => `<option value="${c.id}" ${v.bic === c.id ? "selected" : ""}>${esc(c.data.name)}</option>`).join("")}</select>
+          <div class="muted help">They see it in their 🔔 and on My Tasks until it's done.</div></div>
         <div class="field"><label for="jtDate">Date <span class="muted">(done date, or target date)</span></label><input id="jtDate" type="date" value="${esc(v.date || "")}"></div>
         <div class="field"><label for="jtNote">Note</label><textarea id="jtNote" placeholder="e.g. Waiting on DOB, permit # …">${esc(v.note || "")}</textarea></div>
         ${v.by ? `<p class="muted" style="font-size:13px">Last changed by ${esc(v.by)} · ${esc(PM.fmtDateTime(v.at))}</p>` : ""}`,
       onOpen: root => $$("input[name=jtState]", root).forEach(i => i.onchange = () => { if (i.value === "done" && !$("#jtDate", root).value) $("#jtDate", root).value = PM.today(); }),
-      onSave: async root => saveStep(p, stepId, { state: $("input[name=jtState]:checked", root).value, date: $("#jtDate", root).value, note: $("#jtNote", root).value.trim() })
+      onSave: async root => saveStep(p, stepId, { state: $("input[name=jtState]:checked", root).value, date: $("#jtDate", root).value, note: $("#jtNote", root).value.trim(), bic: $("#jtBic", root).value })
     });
   }
 
@@ -91,10 +94,11 @@
     });
   }
 
+  const initials = n => String(n || "?").split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join("");
   const cell = (p, s, v) => {
     const st = v.state || "";
     return `<td class="jt-cell jt-${st || "none"} ${canEdit(p.id) ? "click" : ""}" data-jt="${p.id}|${s.id}" title="${esc(s.name)}: ${esc(LABEL[st])}${v.date ? " · " + esc(PM.fmtDate(v.date)) : ""}${v.note ? "\n" + esc(v.note) : ""}">
-      ${st === "done" ? "✓" : st === "blocked" ? "!" : st === "progress" ? "…" : st === "na" ? "—" : ""}${v.date ? `<small>${esc(PM.fmtDate(v.date).replace(/, \d{4}$/, ""))}</small>` : ""}${v.note ? `<i class="jt-note"></i>` : ""}</td>`;
+      ${st === "done" ? "✓" : st === "blocked" ? "!" : st === "progress" ? "…" : st === "na" ? "—" : ""}${v.date ? `<small>${esc(PM.fmtDate(v.date).replace(/, \d{4}$/, ""))}</small>` : ""}${v.note ? `<i class="jt-note"></i>` : ""}${v.bic && !["done", "na"].includes(st) ? `<span class="jt-bic" title="Ball in court: ${esc(PM.contactName(v.bic))}">${esc(initials(PM.contactName(v.bic)))}</span>` : ""}</td>`;
   };
 
   function wire() {
@@ -137,10 +141,11 @@
       <div class="page-head"><h1>${esc(p.data.name)}</h1><span class="sub">${bar(pr.pct)} ${pr.done} of ${pr.total} steps done</span>
         <div class="actions"><a class="btn" href="#/p/${p.id}">Open project</a></div></div>
       ${tabs}
-      <div class="panel flush"><div class="table-wrap"><table class="list jt-job-steps"><thead><tr><th>#</th><th>Step</th><th>Status</th><th>Date</th><th>Note</th><th>Updated</th></tr></thead><tbody>
+      <div class="panel flush"><div class="table-wrap"><table class="list jt-job-steps"><thead><tr><th>#</th><th>Step</th><th>Status</th><th>Ball in court</th><th>Date</th><th>Note</th><th>Updated</th></tr></thead><tbody>
         ${steps().map((s, i) => { const v = st[s.id] || {}; return `<tr class="${edit ? "click" : ""}" data-jt="${p.id}|${s.id}">
           <td>${i + 1}</td><td><strong>${esc(s.name)}</strong></td>
           <td class="nowrap"><span class="jt-dot jt-${v.state || "none"}"></span> ${esc(LABEL[v.state || ""])}</td>
+          <td>${v.bic && !["done", "na"].includes(v.state) ? esc(PM.contactName(v.bic)) : ""}</td>
           <td class="nowrap">${esc(PM.fmtDate(v.date) || "")}</td><td class="prose">${esc(v.note || "")}</td>
           <td class="muted nowrap" style="font-size:12px">${v.by ? esc(v.by) + " · " + esc(PM.fmtDate(v.at)) : ""}</td></tr>`; }).join("")}
       </tbody></table></div></div>
@@ -156,5 +161,16 @@
       <div style="margin-top:6px">${pr.blocked.length ? `<span class="overdue">Blocked: ${esc(pr.blocked.map(s => s.name).join(", "))}</span>` : pr.current ? "Next: <strong>" + esc(pr.current.name) + "</strong>" : "All steps done ✓"}</div></div>`;
   }
 
-  PM.jobs = { page, homePanel, steps, progress, DEFAULT_STEPS };
+  // Steps across all jobs where this person has the ball (for My Tasks)
+  async function inCourt(contactId) {
+    if (!contactId) return [];
+    await loadAll();
+    const S = steps(), out = [];
+    Store.all("jobstatus").forEach(r => Object.entries(r.data.steps || {}).forEach(([sid, v]) => {
+      const step = S.find(x => x.id === sid);
+      if (step && v.bic === contactId && !["done", "na"].includes(v.state)) out.push({ projectId: r.projectId, stepId: sid, step: step.name, v });
+    }));
+    return out;
+  }
+  PM.jobs = { page, homePanel, steps, progress, inCourt, stepModal, DEFAULT_STEPS };
 })();

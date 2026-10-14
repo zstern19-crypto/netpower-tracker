@@ -135,9 +135,10 @@
           <h2>Crew</h2>
           <input type="search" id="mpSearch" placeholder="Search people…">
           <label class="inline-check" style="margin:6px 0"><input type="checkbox" id="mpFree"> Only people with open days</label>
+          <div class="mp-multi"><span class="muted" id="mpSelN">Tick people to deploy several at once</span><button class="btn small primary" id="mpSelGo" hidden>Deploy selected</button><button class="btn small" id="mpSelClear" hidden>Clear</button></div>
           <div id="mpCrewList">${people.map(u => { const n = daysOf(u.id).filter(d => parse(d).getDay() % 6 !== 0).length;
             return `<div class="mp-person" draggable="true" data-user="${u.id}" data-name="${esc(u.name.toLowerCase())}" data-free="${n < 5 ? 1 : 0}" title="${esc(u.name)}${u.trade ? " — " + esc(u.trade) : ""}">
-              ${avatar(u, 34)}<div class="mp-pn"><strong>${esc(u.name)}</strong><span class="muted">${esc(u.trade || "")}</span></div>
+              <input type="checkbox" class="mp-sel" value="${u.id}" aria-label="Select ${esc(u.name)}">${avatar(u, 34)}<div class="mp-pn"><strong>${esc(u.name)}</strong><span class="muted">${esc(u.trade || "")}</span></div>
               <span class="mp-days ${n >= 5 ? "full" : n ? "part" : ""}" title="Weekdays deployed this week">${n}/5</span>
               ${u.certAlert ? `<span class="mp-cert ${u.certAlert}" title="Certification ${u.certAlert}">!</span>` : ""}</div>`; }).join("") || `<p class="muted">No people yet. Company admins add people under Users.</p>`}</div>
         </aside>
@@ -155,6 +156,7 @@
       </div>`;
   }
 
+  const selected = () => $$("#mpCrewList .mp-sel:checked").map(c => c.value);
   function wireBoard(people, week) {
     PM.lsSet("netpower_pm_week", week);
     const list = $("#mpCrewList");
@@ -167,7 +169,12 @@
     $("#mpFree").onchange = filter;
     let drag = null;
     document.querySelectorAll("[draggable=true][data-user], [draggable=true][data-dep]").forEach(el => {
-      el.addEventListener("dragstart", e => { drag = el.dataset.user ? { user: el.dataset.user } : { dep: el.dataset.dep }; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", el.dataset.user || el.dataset.dep); });
+      el.addEventListener("dragstart", e => {
+        // dragging a ticked person carries everyone who is ticked
+        const sel = selected();
+        drag = el.dataset.user ? { users: sel.includes(el.dataset.user) ? sel : [el.dataset.user] } : { dep: el.dataset.dep };
+        e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", el.dataset.user || el.dataset.dep);
+      });
       el.addEventListener("dragend", () => { drag = null; $$(".mp-cell.over").forEach(c => c.classList.remove("over")); });
     });
     $$("[data-drop]").forEach(cell => {
@@ -178,11 +185,25 @@
         cell.classList.remove("over");
         if (!drag) return;
         const d = drag; drag = null;
-        if (d.user) assignModal(people, d.user, cell.dataset.drop, cell.dataset.day);
+        if (d.users) assignModal(people, d.users, cell.dataset.drop, cell.dataset.day);
         else moveModal(people, Store.get(d.dep), cell.dataset.drop, cell.dataset.day);
       });
     });
-    $$("[data-add]").forEach(b => b.onclick = () => assignModal(people, "", b.dataset.add, b.dataset.day));
+    $$("[data-add]").forEach(b => b.onclick = () => assignModal(people, selected(), b.dataset.add, b.dataset.day));
+    const syncSel = () => {
+      const n = selected().length;
+      $("#mpSelN").textContent = n ? `${n} selected — drag one of them onto a job/day, or:` : "Tick people to deploy several at once";
+      $("#mpSelGo").hidden = $("#mpSelClear").hidden = !n;
+    };
+    list.addEventListener("change", e => { if (e.target.classList.contains("mp-sel")) syncSel(); });
+    $("#mpSelClear").onclick = () => { $$(".mp-sel", list).forEach(c => { c.checked = false; }); syncSel(); };
+    $("#mpSelGo").onclick = () => {
+      const projects = boardProjects().filter(p => PM.can(p.id, "manpower", "standard"));
+      if (!projects.length) return;
+      PM.openModal({ title: "Deploy selected to…", noRender: true, saveLabel: "Next",
+        body: `<div class="field"><label for="mpSelProj">Job</label><select id="mpSelProj">${projects.map(p => `<option value="${p.id}">${esc(p.data.name)}</option>`).join("")}</select></div>`,
+        onSave: root => { const pid = $("#mpSelProj", root).value; setTimeout(() => assignModal(people, selected(), pid, PM.lsGet("netpower_pm_week", "") || iso(new Date())), 0); return true; } });
+    };
     $$("[data-open]").forEach(c => c.onclick = e => {
       const x = e.target.closest("[data-rmday]");
       if (x) { e.stopPropagation(); removeDays(Store.get(x.dataset.rmday), x.dataset.day, x.dataset.day, people); return; }
@@ -317,15 +338,16 @@
   const clashText = (list) => list.map(d => `${(Store.get(d.projectId) || { data: { name: "another project" } }).data.name} (${PM.fmtDate(d.data.start)} – ${PM.fmtDate(d.data.end)})`).join(", ");
 
   // Deploy one or several people to a job for a range of days
-  function assignModal(people, userId, projectId, day) {
+  function assignModal(people, userIds, projectId, day) {
     const p = Store.get(projectId);
+    const pre = [].concat(userIds || []).filter(Boolean);
     PM.openModal({
       title: "Deploy to " + p.data.name,
       saveLabel: "Deploy",
       body: `<div class="form-grid">
           <div class="field full"><label>People <span class="muted" id="dpCount"></span></label>
             <input type="search" id="dpSearch" placeholder="Search…" style="margin-bottom:6px">
-            <div class="checks dp-people" id="dpPeople">${people.map(u => `<label data-n="${esc(u.name.toLowerCase())}"><input type="checkbox" name="dpUser" value="${u.id}" ${u.id === userId ? "checked" : ""}> ${esc(u.name)}${u.trade ? ` <span class="muted">${esc(u.trade)}</span>` : ""}<span class="dp-warn" data-warn="${u.id}"></span></label>`).join("") || `<span class="muted">No people yet. Add crew in the Directory (Paste a list…).</span>`}</div></div>
+            <div class="checks dp-people" id="dpPeople">${people.map(u => `<label data-n="${esc(u.name.toLowerCase())}"><input type="checkbox" name="dpUser" value="${u.id}" ${pre.includes(u.id) ? "checked" : ""}> ${esc(u.name)}${u.trade ? ` <span class="muted">${esc(u.trade)}</span>` : ""}<span class="dp-warn" data-warn="${u.id}"></span></label>`).join("") || `<span class="muted">No people yet. Add crew in the Directory (Paste a list…).</span>`}</div></div>
           <div class="field"><label for="dpStart">From</label><input type="date" id="dpStart" value="${day}"></div>
           <div class="field"><label for="dpEnd">Through</label><input type="date" id="dpEnd" value="${weekEnd(day)}"></div>
           <div class="field full"><label for="dpNote">Note (optional)</label><input id="dpNote" placeholder="e.g. Night shift, bring lift"></div></div>`,
