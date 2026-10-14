@@ -316,28 +316,40 @@
   }
   const clashText = (list) => list.map(d => `${(Store.get(d.projectId) || { data: { name: "another project" } }).data.name} (${PM.fmtDate(d.data.start)} – ${PM.fmtDate(d.data.end)})`).join(", ");
 
+  // Deploy one or several people to a job for a range of days
   function assignModal(people, userId, projectId, day) {
     const p = Store.get(projectId);
     PM.openModal({
       title: "Deploy to " + p.data.name,
       saveLabel: "Deploy",
       body: `<div class="form-grid">
-          <div class="field full"><label for="dpUser">Person</label><select id="dpUser"><option value="">Select a person</option>${people.map(u => `<option value="${u.id}" ${u.id === userId ? "selected" : ""}>${esc(u.name)}${u.trade ? " — " + esc(u.trade) : ""}</option>`).join("")}</select></div>
+          <div class="field full"><label>People <span class="muted" id="dpCount"></span></label>
+            <input type="search" id="dpSearch" placeholder="Search…" style="margin-bottom:6px">
+            <div class="checks dp-people" id="dpPeople">${people.map(u => `<label data-n="${esc(u.name.toLowerCase())}"><input type="checkbox" name="dpUser" value="${u.id}" ${u.id === userId ? "checked" : ""}> ${esc(u.name)}${u.trade ? ` <span class="muted">${esc(u.trade)}</span>` : ""}<span class="dp-warn" data-warn="${u.id}"></span></label>`).join("") || `<span class="muted">No people yet. Add crew in the Directory (Paste a list…).</span>`}</div></div>
           <div class="field"><label for="dpStart">From</label><input type="date" id="dpStart" value="${day}"></div>
           <div class="field"><label for="dpEnd">Through</label><input type="date" id="dpEnd" value="${weekEnd(day)}"></div>
-          <div class="field full"><label for="dpNote">Note (optional)</label><input id="dpNote" placeholder="e.g. Night shift, bring lift"></div></div>
-        <div id="dpWarn" class="field-err" style="display:block"></div>`,
+          <div class="field full"><label for="dpNote">Note (optional)</label><input id="dpNote" placeholder="e.g. Night shift, bring lift"></div></div>`,
       onOpen: root => {
-        const warn = () => { const u = $("#dpUser", root).value, s = $("#dpStart", root).value, e = $("#dpEnd", root).value; const c = u && s && e ? clashes(u, s, e) : []; $("#dpWarn", root).textContent = c.length ? "⚠ Already deployed to " + clashText(c) : ""; };
-        ["#dpUser", "#dpStart", "#dpEnd"].forEach(sel => $(sel, root).addEventListener("change", warn));
+        const picked = () => $$("input[name=dpUser]:checked", root).map(i => i.value);
+        const warn = () => {
+          const s = $("#dpStart", root).value, e = $("#dpEnd", root).value;
+          $$("[data-warn]", root).forEach(el => { const c = s && e ? clashes(el.dataset.warn, s, e) : []; el.textContent = c.length ? " ⚠ already on " + clashText(c) : ""; });
+          $("#dpCount", root).textContent = picked().length ? `(${picked().length} selected)` : "";
+        };
+        ["#dpStart", "#dpEnd"].forEach(sel => $(sel, root).addEventListener("change", warn));
+        $("#dpPeople", root).addEventListener("change", warn);
+        $("#dpSearch", root).oninput = e => { const q = e.target.value.trim().toLowerCase(); $$("#dpPeople label", root).forEach(l => { l.hidden = q && !l.dataset.n.includes(q); }); };
         warn();
       },
       onSave: async root => {
-        const u = $("#dpUser", root).value, s = $("#dpStart", root).value, e = $("#dpEnd", root).value;
-        if (!u) { toast("Pick a person", true); return false; }
+        const ids = $$("input[name=dpUser]:checked", root).map(i => i.value), s = $("#dpStart", root).value, e = $("#dpEnd", root).value;
+        if (!ids.length) { toast("Pick at least one person", true); return false; }
         if (!s || !e || e < s) { toast("Check the dates", true); return false; }
-        const person = personById(people, u);
-        return PM.saveRec({ id: uid("dep"), type: "deploy", projectId, data: { userId: u, name: person.name, start: s, end: e, note: $("#dpNote", root).value.trim(), by: PM.meName(), at: new Date().toISOString() } }, `${person.name} deployed to ${p.data.name}`);
+        const note = $("#dpNote", root).value.trim(), at = new Date().toISOString();
+        const recs = ids.map(u => ({ id: uid("dep"), type: "deploy", projectId, data: { userId: u, name: personById(people, u).name, start: s, end: e, note, by: PM.meName(), at } }));
+        try { await Store.saveMany(recs); } catch (err) { toast("Not saved: " + err.message, true); return false; }
+        toast(ids.length === 1 ? `${recs[0].data.name} deployed to ${p.data.name}` : `${ids.length} people deployed to ${p.data.name}`);
+        return true;
       }
     });
   }

@@ -604,3 +604,5 @@ details.fold[open] > summary { margin-bottom: 10px; }
 .co-drop { display: block; border: 2px dashed var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; background: #fff; cursor: pointer; }
 .co-drop.over { border-color: var(--accent); background: #fff3ec; }
 .co-drop.busy { opacity: .6; pointer-events: none; }
+.dp-people { max-height: 300px; overflow: auto; }
+.dp-warn { color: #a12020; font-size: 12px; }
