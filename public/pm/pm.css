@@ -598,3 +598,6 @@ details.fold > summary h2 { margin: 0; }
 details.fold > summary::after { content: "▾"; margin-left: auto; color: var(--muted); transition: transform .15s; }
 details.fold:not([open]) > summary::after { transform: rotate(-90deg); }
 details.fold[open] > summary { margin-bottom: 10px; }
+
+/* Change orders */
+.list td.num, .list th.num { text-align: right; }

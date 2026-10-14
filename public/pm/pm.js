@@ -189,7 +189,7 @@
     });
   }
   // Route segment → permission tool
-  const ROUTE_TOOL = { rfis: "rfis", submittals: "submittals", dailylog: "dailylog", punch: "punch", drawings: "drawings", specs: "specs", photos: "photos", inspections: "inspections", team: "directory" };
+  const ROUTE_TOOL = { rfis: "rfis", submittals: "submittals", dailylog: "dailylog", punch: "punch", drawings: "drawings", specs: "specs", photos: "photos", inspections: "inspections", changeorders: "changeorders", team: "directory" };
 
   function contactName(id) { const c = Store.get(id); return c ? c.data.name : ""; }
   function companyName(id) { const c = Store.get(id); return c ? c.data.name : ""; }
@@ -373,6 +373,7 @@
     ["drawings", "Drawings", "drawings", null],
     ["photos", "Photos", "photos", "photos?upload=1"],
     ["inspections", "Inspections", "inspections", "inspections?new=1"],
+    ["changeorders", "Change Orders", "changeorders", null],
     ["specs", "Specifications", "specs", null]
   ];
 
@@ -430,6 +431,7 @@
       ["punch", "Punch List", open("punch", ["Open", "Ready for Review", "Work Not Accepted"])],
       ["photos", "Photos", Store.all("jphoto", p.id).length || ""],
       ["inspections", "Inspections", Store.all("inspection", p.id).filter(r => r.data.status === "Scheduled").length || ""],
+      ["changeorders", "Change Orders", Store.all("changeorder", p.id).filter(r => r.data.status === "Pending").length || ""],
       ["specs", "Specifications", Store.all("spec", p.id).length || ""],
       ["team", "Project Directory", ((p.data.team || []).length) || ""],
       ...(isCompanyAdmin() && Store.mode !== "local" ? [["permissions", "Permissions", ""]] : [])
@@ -466,11 +468,11 @@
           current.tool = parts[2] || "home";
           // Load only what this user may see
           const LOADS = [["rfi", "rfis"], ["submittal", "submittals"], ["dailylog", "dailylog"], ["punch", "punch"],
-            ["drawing", "drawings"], ["markup", "drawings"], ["drawset", "drawings"], ["spec", "specs"], ["subpackage", "submittals"], ["jphoto", "photos"], ["logsetting", "dailylog"], ["inspection", "inspections"], ["lookup", null]];
+            ["drawing", "drawings"], ["markup", "drawings"], ["drawset", "drawings"], ["spec", "specs"], ["subpackage", "submittals"], ["jphoto", "photos"], ["logsetting", "dailylog"], ["inspection", "inspections"], ["changeorder", "changeorders"], ["lookup", null]];
           await Promise.all(LOADS.filter(([, tool]) => !tool || can(p.id, tool)).map(([t]) => Store.load(t, p.id)));
           const sub = parts[3];
           // A link to something created elsewhere (e.g. by Claude) since this page loaded: fetch it again
-          const SUB_TYPE = { rfis: "rfi", submittals: "submittal", punch: "punch", drawings: "drawing" }[current.tool];
+          const SUB_TYPE = { rfis: "rfi", submittals: "submittal", punch: "punch", drawings: "drawing", changeorders: "changeorder" }[current.tool];
           if (SUB_TYPE && sub && /^[a-z]+_[a-z0-9]+$/.test(sub) && !Store.get(sub) && Store.mode !== "local" && can(p.id, ROUTE_TOOL[current.tool])) {
             Store.loaded.delete(SUB_TYPE + "|" + p.id);
             await Store.load(SUB_TYPE, p.id);
@@ -493,6 +495,7 @@
             team: () => projectTeam(p),
             photos: () => PM.photos ? PM.photos.page(p, query) : `<div class="empty">Photos module failed to load.</div>`,
             inspections: () => PM.inspections ? PM.inspections.page(p, query) : `<div class="empty">Inspections module failed to load.</div>`,
+            changeorders: () => PM.changeorders ? PM.changeorders.page(p, sub) : `<div class="empty">Change orders module failed to load.</div>`,
             drawings: () => PM.drawings ? (sub === "review" ? PM.drawings.review(p, parts[4]) : sub ? PM.drawings.viewer(p, sub, query) : PM.drawings.log(p)) : `<div class="empty">Drawings module failed to load.</div>`
           }[current.tool] || (() => `<div class="empty">Unknown tool.</div>`);
         }

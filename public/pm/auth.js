@@ -300,7 +300,7 @@
   // ───────────────────────── Project permissions ─────────────────────────
   async function projectPermissions(p) {
     await Promise.all([Store.load("member", p.id), Store.load("permtemplate")]);
-    const users = await loadUsers();
+    const users = await loadUsers(true);  // fresh, so people just added under Users can be added here
     const tpls = Store.all("permtemplate").sort((a, b) => a.data.name.localeCompare(b.data.name));
     const members = Store.all("member", p.id).map(m => ({ m, u: users.find(u => u.id === m.data.userId) })).filter(x => x.u)
       .sort((a, b) => a.u.name.localeCompare(b.u.name));
