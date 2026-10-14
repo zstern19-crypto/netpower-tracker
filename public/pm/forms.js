@@ -753,7 +753,7 @@
         ${items.map(x => `<tr class="click" data-href="#/p/${p.id}/submittals/${x.id}"><td><a href="#/p/${p.id}/submittals/${x.id}">#${esc(x.data.number)}.${esc(x.data.revision || 0)}</a></td><td>${esc(x.data.title)}</td><td>${esc(x.data.subType || "")}</td><td>${PM.pill(x.data.status)}</td><td>${esc(PM.bicNames(PM.submittalBIC(x)))}</td><td>${PM.fmtDate(x.data.due)}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">No submittals in this package yet.</td></tr>`}
       </tbody></table></div>`;
   }
-  const subTabs = (p, on) => `<div class="tabs sub-tabs"><a href="#/p/${p.id}/submittals" class="${on === "items" ? "on" : ""}">Items</a><a href="#/p/${p.id}/submittals/packages" class="${on === "packages" ? "on" : ""}">Packages</a></div>`;
+  const subTabs = (p, on) => `<div class="tabs sub-tabs"><a href="#/p/${p.id}/submittals" class="${on === "items" ? "on" : ""}">Items</a><a href="#/p/${p.id}/submittals/packages" class="${on === "packages" ? "on" : ""}">Packages</a>${PM.equipment ? `<a href="#/p/${p.id}/submittals/equipment">Equipment</a>` : ""}</div>`;
 
   PM.forms = { hydrateImages, isImage, rfiPage, rfiModal, submittalPage, specsPage, sanitizeHTML, richHTML, attachmentsView, specLabel, micBtn,
     packagesPage, packageDetail, packageName, packagesOf, subTabs, editPackage };

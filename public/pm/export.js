@@ -534,5 +534,5 @@
 
   // Kept for older callers: the printable HTML version is replaced by the real PDF
   const printPDF = (p, rfis) => downloadPDF(p, rfis, "rfi");
-  PM.exporter = { buildPDF, downloadPDF, printPDF, emailModal, shareModal, ensureShare, shareUrl, emlDraft, letterhead, letterheadPage, saveFile };
+  PM.exporter = { pdfLib, buildPDF, downloadPDF, printPDF, emailModal, shareModal, ensureShare, shareUrl, emlDraft, letterhead, letterheadPage, saveFile };
 })();

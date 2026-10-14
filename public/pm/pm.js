@@ -468,7 +468,7 @@
           current.tool = parts[2] || "home";
           // Load only what this user may see
           const LOADS = [["rfi", "rfis"], ["submittal", "submittals"], ["dailylog", "dailylog"], ["punch", "punch"],
-            ["drawing", "drawings"], ["markup", "drawings"], ["drawset", "drawings"], ["spec", "specs"], ["subpackage", "submittals"], ["jphoto", "photos"], ["logsetting", "dailylog"], ["inspection", "inspections"], ["changeorder", "changeorders"], ["lookup", null]];
+            ["drawing", "drawings"], ["markup", "drawings"], ["drawset", "drawings"], ["spec", "specs"], ["subpackage", "submittals"], ["jphoto", "photos"], ["logsetting", "dailylog"], ["inspection", "inspections"], ["changeorder", "changeorders"], ["equipment", "submittals"], ["lookup", null]];
           await Promise.all(LOADS.filter(([, tool]) => !tool || can(p.id, tool)).map(([t]) => Store.load(t, p.id)));
           const sub = parts[3];
           // A link to something created elsewhere (e.g. by Claude) since this page loaded: fetch it again
@@ -483,7 +483,7 @@
           view = noAccess ? () => `<div class="empty">You don't have access to this part of the project. Ask a company admin if you need it.</div>` : {
             home: () => projectHome(p),
             rfis: () => sub === "new" ? F.rfiPage(p, null) : parts[4] === "edit" ? F.rfiPage(p, Store.get(sub)) : sub ? rfiDetail(p, sub, query) : rfiList(p),
-            submittals: () => sub === "packages" ? (parts[4] ? F.packageDetail(p, parts[4]) : F.packagesPage(p)) : sub === "new" ? F.submittalPage(p, null, query) : parts[4] === "edit" ? F.submittalPage(p, Store.get(sub)) : sub ? submittalDetail(p, sub) : submittalList(p),
+            submittals: () => sub === "equipment" && PM.equipment ? PM.equipment.page(p) : sub === "packages" ? (parts[4] ? F.packageDetail(p, parts[4]) : F.packagesPage(p)) : sub === "new" ? F.submittalPage(p, null, query) : parts[4] === "edit" ? F.submittalPage(p, Store.get(sub)) : sub ? submittalDetail(p, sub) : submittalList(p),
             specs: () => F.specsPage(p, sub),
             permissions: () => PM.auth.projectPermissions(p),
             dailylog: () => dailyLog(p, sub),

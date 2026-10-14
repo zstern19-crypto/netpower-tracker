@@ -2028,6 +2028,26 @@
     }
   }
 
-  PM.drawings = { review, pendingSets, log, viewer, linksPanel, rfiMarkupsPanel, detectSheet, disciplineFor, sheetsOf, currentRev };
+  // One sheet of a drawing set on its own: a 1-page PDF (keeps the text sharp), or a JPEG for very large scanned pages
+  const setBytes = new Map();
+  async function sheetPdf(rev) {
+    if (!setBytes.has(rev.fileUrl)) setBytes.set(rev.fileUrl, fetch(await fileObjectUrl(rev.fileUrl)).then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.arrayBuffer(); }));
+    const L = await PM.exporter.pdfLib();
+    const src = await L.PDFDocument.load(await setBytes.get(rev.fileUrl), { ignoreEncryption: true });
+    const out = await L.PDFDocument.create();
+    const [pg] = await out.copyPages(src, [rev.page - 1]);
+    out.addPage(pg);
+    return new Blob([await out.save()], { type: "application/pdf" });
+  }
+  async function sheetImage(rev, maxPx = 3000) {
+    const page = await (await openPdf(rev.fileUrl)).getPage(rev.page);
+    const vp1 = page.getViewport({ scale: 1 }), vp = page.getViewport({ scale: maxPx / Math.max(vp1.width, vp1.height) });
+    const c = document.createElement("canvas"); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+    const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
+    await page.render({ canvasContext: ctx, viewport: vp }).promise;
+    return new Promise(res => c.toBlob(res, "image/jpeg", 0.85));
+  }
+
+  PM.drawings = { review, pendingSets, log, viewer, linksPanel, rfiMarkupsPanel, detectSheet, disciplineFor, sheetsOf, currentRev, sheetPdf, sheetImage };
   PM.files = { upload: uploadFile, readableUrl, fileObjectUrl, deleteFiles };
 })();
