@@ -163,7 +163,7 @@
         if (act === "ics") downloadIcs(p, rec);
         if (act === "mail") emailInvite(p, rec);
         if (act === "edit") editInspection(p, rec);
-        if (act === "reinspect") editInspection(p, null, { type: "Re-inspection", title: [rec.data.type, rec.data.title].filter(Boolean).join(" - "), area: rec.data.area, inspector: rec.data.inspector, agency: rec.data.agency, phone: rec.data.phone, attendees: rec.data.attendees, date: PM.addDays(PM.today(), 1), notes: rec.data.result ? "Previous result: " + rec.data.result : "" });
+        if (act === "reinspect") editInspection(p, null, { type: "Re-inspection", title: [rec.data.type, rec.data.title].filter(Boolean).join(" - "), area: rec.data.area, inspector: rec.data.inspector, agency: rec.data.agency, phone: rec.data.phone, attendees: rec.data.attendees, date: PM.addDays(PM.today(), 1), notes: rec.data.notes ? "Previous inspection: " + rec.data.notes : "" });
         if (act === "del") {
           if (!window.confirm("Delete this inspection?")) return;
           try { await Store.remove(rec.id); PM.files.deleteFiles((rec.data.attachments || []).map(f => f.url)).catch(() => {}); toast("Deleted"); PM.render(); } catch (e) { toast(e.message, true); }
