@@ -60,6 +60,35 @@ export async function checkRead(ctx, type, project) {
   ensure(ctx.can(pid, TYPE_TOOL[type], "read"));
 }
 
+// What of these records (all of one type) this user may see — shared by the type list and the whole-project pack
+function visibleRecords(ctx, type, project, records) {
+  if (type === "project" && !ctx.isAdmin) records = records.filter(r => ctx.isMember(r.id)).map(r => { const { value, ...data } = r.data; return { ...r, data }; });  // contract value: company admins only
+  // Drawing uploads waiting for review are only visible to drawing admins
+  if (type === "drawset") records = records.filter(r => r.data.status !== "pending" || ctx.can(r.projectId, "drawings", "admin"));
+  if (type === "cert" && !ctx.isAdmin) records = records.filter(r => r.data.userId === ctx.user.id);
+  if ((type === "deploy" || type === "mpplan") && !project) records = records.filter(r => ctx.can(r.projectId, "manpower", "read"));
+  if (type === "jobstatus" && !project) records = records.filter(r => ctx.isMember(r.projectId));
+  if (type === "task" && !project) records = records.filter(r => ctx.can(r.projectId, "tasks", "read"));
+  records = records.filter(r => r.id && canSeePrivate(ctx, r));
+  // Other people's markups: only what they've published
+  if (type === "markup") records = records.map(r => (r.data.ownerId === ctx.contactId ? r
+    : { ...r, data: { ...r.data, shapes: (r.data.shapes || []).filter(s => s && s.published) } }));
+  return records;
+}
+
+// Everything in one project the user may see, in one request (fewer database calls; also what phones save for offline).
+// Types and their tools match the project page's loads in public/pm/pm.js.
+export const PACK_TYPES = { rfi: "rfis", submittal: "submittals", dailylog: "dailylog", punch: "punch", drawing: "drawings", markup: "drawings",
+  drawset: "drawings", spec: "specs", subpackage: "submittals", jphoto: "photos", logsetting: "dailylog", inspection: "inspections",
+  changeorder: "changeorders", equipment: "submittals", task: "tasks", lookup: null, deploy: "manpower", mpplan: "manpower", jobstatus: null };
+async function projectPack(ctx, project) {
+  ensure(ID_RE.test(project || ""), "A project is required");
+  ensure(ctx.isMember(project) || ctx.isAdmin, "Not found");
+  const types = Object.entries(PACK_TYPES).filter(([, tool]) => (tool ? ctx.can(project, tool, "read") : ctx.isMember(project) || ctx.isAdmin)).map(([t]) => t);
+  const all = await db.find(db.eq("ProjectID", project));
+  return { types, records: types.flatMap(t => visibleRecords(ctx, t, project, all.filter(r => r.type === t))) };
+}
+
 // Write check for one record (new state) and, for updates, its stored version.
 export async function checkWrite(ctx, rec, stored) {
   const t = rec.type;
@@ -188,7 +217,7 @@ async function handleAction(req, res, action) {
     return res.status(200).json({ ok: true, user: auth.publicUser(ctx.user), isAdmin: ctx.isAdmin, perms: ctx.perms, tools: auth.TOOLS, levels: auth.LEVELS });
   }
 
-  if (req.method !== "POST" && !["users", "people", "notifications", "shared", "pushPrefs"].includes(action)) throw httpError(405, "Method not allowed");
+  if (req.method !== "POST" && !["users", "people", "notifications", "shared", "pushPrefs", "projectPack"].includes(action)) throw httpError(405, "Method not allowed");
 
   if (action === "setup") {
     ensure((await db.find(db.eq("Type", "user"))).length === 0, "Setup has already been completed — please sign in");
@@ -278,6 +307,7 @@ async function handleAction(req, res, action) {
     return res.status(200).json({ ok: true, sent: n });
   }
   // 🔔 list without the ones this person already read (read state syncs across their phone and computer)
+  if (action === "projectPack") return res.status(200).json({ ok: true, ...(await projectPack(ctx, String(req.query.project || ""))) });
   if (action === "notifications") {
     const list = await auth.cached("notify:" + ctx.user.id, 60000, async () => {
       const [items, read] = await Promise.all([notify.forUser(ctx), db.get("nread_" + ctx.user.id)]);
@@ -385,18 +415,7 @@ export default async function handler(req, res) {
       ensure(TYPES.includes(type), "Unknown type");
       if (project) ensure(ID_RE.test(project), "Bad project id");
       await checkRead(ctx, type, project);
-      let records = await db.find(db.and([db.eq("Type", type), ...(project ? [db.eq("ProjectID", project)] : [])]));
-      if (type === "project" && !ctx.isAdmin) records = records.filter(r => ctx.isMember(r.id)).map(r => { const { value, ...data } = r.data; return { ...r, data }; });  // contract value: company admins only
-      // Drawing uploads waiting for review are only visible to drawing admins
-      if (type === "drawset") records = records.filter(r => r.data.status !== "pending" || ctx.can(r.projectId, "drawings", "admin"));
-      if (type === "cert" && !ctx.isAdmin) records = records.filter(r => r.data.userId === ctx.user.id);
-      if ((type === "deploy" || type === "mpplan") && !project) records = records.filter(r => ctx.can(r.projectId, "manpower", "read"));
-      if (type === "jobstatus" && !project) records = records.filter(r => ctx.isMember(r.projectId));
-      if (type === "task" && !project) records = records.filter(r => ctx.can(r.projectId, "tasks", "read"));
-      records = records.filter(r => r.id && canSeePrivate(ctx, r));
-      // Other people's markups: only what they've published
-      if (type === "markup") records = records.map(r => (r.data.ownerId === ctx.contactId ? r
-        : { ...r, data: { ...r.data, shapes: (r.data.shapes || []).filter(s => s && s.published) } }));
+      const records = visibleRecords(ctx, type, project, await db.find(db.and([db.eq("Type", type), ...(project ? [db.eq("ProjectID", project)] : [])])));
       return res.status(200).json({ ok: true, records });
     }
 

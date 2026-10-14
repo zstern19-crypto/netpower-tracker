@@ -118,7 +118,7 @@
       m.remove();
       if (!a) return;
       ev.preventDefault();
-      if (a.dataset.um === "logout") { await post("logout").catch(() => {}); location.hash = "#/"; location.reload(); }
+      if (a.dataset.um === "logout") { await post("logout").catch(() => {}); if (PM.offline) await PM.offline.clearAll(); location.hash = "#/"; location.reload(); }
       if (a.dataset.um === "password") changePassword();
       if (a.dataset.um === "profile" && PM.people) PM.people.myProfile();
       if (a.dataset.um === "claude") connectClaude();

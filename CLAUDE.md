@@ -77,3 +77,9 @@
   schedule in `vercel.json` `crons` (UTC; Hobby = once a day, fires sometime within that hour). `CRON_SECRET` optional.
 - 🔔 read state: `nread_<userId>` (type `notifread`) maps item key (sha256 of kind|href|text, 16 hex) → read time;
   `?action=notificationsRead` adds keys. App icons are the yellow "P" from the owner's logo PDF (`?v=2` busts caches).
+- Offline: `public/pm/sw.js` (network first, saved copy on failure or after 10 s; caches pm-shell / pm-data / pm-files,
+  header `X-PM-Offline`) + `public/pm/offline.js` (bar, "Save this job for offline", file links via
+  `/pm/__file/<fileUrl>?src=<signed>`, clears caches on sign-out / different user). `?action=projectPack&project=` returns
+  a whole job in one request (`PACK_TYPES` in api/pm.js must match the project page's loads in pm.js); the page uses it.
+  `/pm` redirects to `/pm/` so the worker controls the page. Test harness: register the worker in the test (it only
+  registers itself on https) and run Chromium without the proxy env vars.

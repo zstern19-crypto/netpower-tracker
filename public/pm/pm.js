@@ -57,8 +57,12 @@
 
   // All API calls go through here: a 401 means the session ended → show the sign-in screen
   async function api(path, opts) {
-    const r = await fetch(path, opts);
+    let r;
+    try { r = await fetch(path, opts); }
+    catch (e) { if (PM.offline) PM.offline.lost(); throw new Error(navigator.onLine === false || (PM.offline && PM.offline.offlineNow()) ? "You're offline — this can't be saved or loaded until you have signal." : "Couldn't reach the server — check your connection and try again."); }
+    if (PM.offline) PM.offline.note(r);
     const d = await r.json().catch(() => ({}));
+    if (d.code === "OFFLINE") { if (PM.offline) PM.offline.lost(); throw new Error(d.error); }
     if (r.status === 401 && (d.code === "AUTH_REQUIRED" || d.code === "SETUP_REQUIRED")) {
       if (PM.auth) PM.auth.showLogin(d.code);
       throw new Error("Please sign in again");
@@ -74,12 +78,17 @@
     // Returns "SETUP_REQUIRED" / "AUTH_REQUIRED" when a sign-in screen is needed
     async init() {
       try {
-        const r = await fetch("/api/pm?action=me");
+        let r;
+        try { r = await fetch("/api/pm?action=me"); }
+        catch (e) { if (navigator.onLine === false) throw new Error("You're offline. Open the app once with signal so it can save your jobs on this phone."); throw e; }
+        if (PM.offline) PM.offline.note(r);
         const d = await r.json().catch(() => ({}));
+        if (d.code === "OFFLINE") throw new Error("You're offline, and nothing is saved on this phone yet. Open the app once with signal (and use “Save this job for offline” on the jobs you need).");
         if (r.status === 503 && d.code === "NOT_CONFIGURED") return this.useLocal();
         if (r.status === 401) { PM.session = null; return d.code || "AUTH_REQUIRED"; }
         if (!d.ok) throw new Error(d.error || "HTTP " + r.status);
         PM.session = d;
+        if (PM.offline) await PM.offline.checkUser();
         await this.load("project");
       } catch (e) {
         if (location.protocol === "file:" || /Failed to fetch|Unexpected token|JSON/.test(e.message)) return this.useLocal();
@@ -103,6 +112,16 @@
       if (projectId) q.set("project", projectId);
       const d = await api("/api/pm?" + q);
       d.records.forEach(rec => { this.cache[rec.id] = rec; });
+      this.loaded.add(key);
+    },
+
+    // Everything in one project in a single request (what the project pages need; also what phones keep offline)
+    async loadProject(projectId) {
+      const key = "pack|" + projectId;
+      if (this.mode === "local" || this.loaded.has(key)) return;
+      const d = await api("/api/pm?action=projectPack&project=" + encodeURIComponent(projectId));
+      d.records.forEach(rec => { this.cache[rec.id] = rec; });
+      d.types.forEach(t => this.loaded.add(t + "|" + projectId));
       this.loaded.add(key);
     },
 
@@ -471,6 +490,7 @@
           // Load only what this user may see
           const LOADS = [["rfi", "rfis"], ["submittal", "submittals"], ["dailylog", "dailylog"], ["punch", "punch"],
             ["drawing", "drawings"], ["markup", "drawings"], ["drawset", "drawings"], ["spec", "specs"], ["subpackage", "submittals"], ["jphoto", "photos"], ["logsetting", "dailylog"], ["inspection", "inspections"], ["changeorder", "changeorders"], ["equipment", "submittals"], ["task", "tasks"], ["lookup", null]];
+          await Store.loadProject(p.id);
           await Promise.all(LOADS.filter(([, tool]) => !tool || can(p.id, tool)).map(([t]) => Store.load(t, p.id)));
           const sub = parts[3];
           // A link to something created elsewhere (e.g. by Claude) since this page loaded: fetch it again
@@ -958,6 +978,7 @@
         <div>
           ${PM.people ? PM.people.crewPanel(p, today(), { title: "Crew on site today" }) : ""}
           ${PM.tasks ? PM.tasks.homePanel(p) : ""}
+          ${PM.offline ? PM.offline.panel(p) : ""}
           ${PM.jobs ? PM.jobs.homePanel(p) : ""}
           ${PM.inspections ? PM.inspections.homePanel(p) : ""}
           <div class="panel"><h2>Project Information</h2>
@@ -1689,7 +1710,7 @@
     await render();
     if (Store.mode === "local" && !me()) pickUser();
   }).catch(e => {
-    $("#main").innerHTML = `<div class="panel"><h2>Could not connect to the database</h2><p class="muted">${esc(e.message)}</p><button class="btn" onclick="location.reload()">Retry</button></div>`;
+    $("#main").innerHTML = `<div class="panel"><h2>${navigator.onLine === false || /offline/i.test(e.message) ? "You're offline" : "Could not connect to the database"}</h2><p class="muted">${esc(e.message)}</p><button class="btn" onclick="location.reload()">Retry</button></div>`;
   });
   // Wait for DOMContentLoaded so extension scripts (drawings.js) can register first
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
