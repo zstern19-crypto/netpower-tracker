@@ -377,7 +377,7 @@ export default async function handler(req, res) {
         }
       }
       const result = await db.save(records, existing);
-      if (records.some(r => ["member", "permtemplate", "cert", "logsetting", "dailylog"].includes(r.type))) auth.clearCache();
+      if (records.some(r => ["member", "permtemplate", "cert", "logsetting", "dailylog", "changeorder", "task"].includes(r.type))) auth.clearCache();
       return res.status(200).json({ ok: true, ...result });
     }
 

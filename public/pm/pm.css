@@ -601,3 +601,6 @@ details.fold[open] > summary { margin-bottom: 10px; }
 
 /* Change orders */
 .list td.num, .list th.num { text-align: right; }
+.co-drop { display: block; border: 2px dashed var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; background: #fff; cursor: pointer; }
+.co-drop.over { border-color: var(--accent); background: #fff3ec; }
+.co-drop.busy { opacity: .6; pointer-events: none; }
