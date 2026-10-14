@@ -47,6 +47,7 @@ export async function checkRead(ctx, type, project) {
   if (type === "project" || type === "company" || type === "contact" || type === "cert" || type === "tool" || type === "setting") return;  // certs are filtered per user below
   if ((type === "deploy" || type === "mpplan") && !project) return ensure(ctx.isAdmin || ctx.projectIds.some(pid => ctx.can(pid, "manpower", "read")));
   if (type === "jobstatus" && !project) return;  // filtered to the user's projects below
+  if (type === "task" && !project) return;       // "My Tasks": filtered to projects where the user can see tasks
   if (type === "member" || type === "permtemplate") return ensure(ctx.isAdmin);
   ensure(project && ID_RE.test(project), "A project is required");
   const pid = await projectOf(type, project);
@@ -359,6 +360,7 @@ export default async function handler(req, res) {
       if (type === "cert" && !ctx.isAdmin) records = records.filter(r => r.data.userId === ctx.user.id);
       if ((type === "deploy" || type === "mpplan") && !project) records = records.filter(r => ctx.can(r.projectId, "manpower", "read"));
       if (type === "jobstatus" && !project) records = records.filter(r => ctx.isMember(r.projectId));
+      if (type === "task" && !project) records = records.filter(r => ctx.can(r.projectId, "tasks", "read"));
       records = records.filter(r => r.id && canSeePrivate(ctx, r));
       // Other people's markups: only what they've published
       if (type === "markup") records = records.map(r => (r.data.ownerId === ctx.contactId ? r

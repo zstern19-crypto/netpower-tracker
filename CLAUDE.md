@@ -64,5 +64,10 @@
   template is setting `set_meptemplate`. `api/assistant.js?action=schedules` reads schedule sheets with structured
   output (`output_config.format`, streamed with `messages.stream().finalMessage()`); `vercel.json` gives that
   function `maxDuration: 300`.
+- Field crew: `contact` records with `data.crew: true`; `?action=people` returns them (id = contact id, `noLogin`) after
+  the users. `deploy.data.userId` may be a contact id; `createUser` with that contactId moves those deployments.
+- `task` records use the `tasks` tool (`assigneeId` = contact id); readable across projects without `project=`.
+  Connector/assistant tools `create_task`, `list_tasks`. `?action=changeorder` reads a dropped CO PDF (structured output).
+- Notifications are cached 60 s per user; saving a changeorder / task clears the cache.
 - Phone layout: the top menu is a second row under the bar (`--topbar-h` = 92px under 720px). The drawing viewer
   handles pinch/pan itself (`touch-action: none`) so the page never zooms.

@@ -35,6 +35,13 @@ export const TOOLS = [
   { name: "respond_to_rfi", description: "Add a response to an RFI, optionally as the official answer and/or closing it.", inputSchema: { type: "object", properties: { project: projectArg, number: { type: "integer" }, response: { type: "string" }, official: { type: "boolean" }, close: { type: "boolean" } }, required: ["project", "number", "response"] } },
   { name: "create_punch_item", description: "Create a punch list item on a project.", inputSchema: { type: "object", properties: { project: projectArg, title: { type: "string" }, description: { type: "string" }, location: { type: "string" }, assignee: { type: "string", description: "Name of the person who does the work" }, priority: { type: "string", enum: ["Low", "Medium", "High"] }, due_date: { type: "string", description: "YYYY-MM-DD" } }, required: ["project", "title"] } },
   { name: "add_daily_log_note", description: "Add a note (and optionally work performed) to a project's daily log for a date (default today). Creates the log if it doesn't exist.", inputSchema: { type: "object", properties: { project: projectArg, note: { type: "string" }, work_performed: { type: "string", description: "Description of work performed today" }, date: { type: "string", description: "YYYY-MM-DD" } }, required: ["project"] } },
+  { name: "create_task", description: "Create a task (to-do) on a project, optionally assigned to someone with a due date. Anyone in the company directory can be assigned, including field crew without a login.",
+    inputSchema: { type: "object", properties: {
+      project: projectArg, title: { type: "string", description: "What needs to be done, short" }, description: { type: "string", description: "Details (optional)" },
+      assignee: { type: "string", description: "Name of the person responsible (optional)" }, due_date: { type: "string", description: "YYYY-MM-DD (optional)" },
+      priority: { type: "string", enum: ["Normal", "High"] }
+    }, required: ["project", "title"] } },
+  { name: "list_tasks", description: "List open tasks on a project, or the connected user's own open tasks across all projects (mine=true).", inputSchema: { type: "object", properties: { project: projectArg, mine: { type: "boolean" }, include_done: { type: "boolean" } } } },
   { name: "list_submittals", description: "List submittals on a project with status and ball-in-court.", inputSchema: { type: "object", properties: { project: projectArg, status: { type: "string" } }, required: ["project"] } }
 ];
 
@@ -156,6 +163,40 @@ export async function callTool(ctx, req, name, a) {
         history: [history(ctx, "Punch item created (via Claude)")], updatedAt: now() } };
       await save(ctx, rec);
       return `Created punch item #${number} "${rec.data.title}" on ${p.data.name}.\nOpen in app: ${appUrl(req, p, "punch/" + rec.id)}`;
+    }
+    case "create_task": {
+      const p = await findProject(ctx, a.project);
+      if (!String(a.title || "").trim()) fail("A task needs a title.");
+      if (a.due_date && !/^\d{4}-\d{2}-\d{2}$/.test(a.due_date)) fail("due_date must look like 2026-10-20");
+      let assignee = null;
+      if (a.assignee) {
+        const all = await db.find(db.eq("Type", "contact"));
+        const team = await teamOf(p);
+        const pool = [...team, ...all.filter(c => c.data.crew && !team.some(t => t.id === c.id))];
+        assignee = matchPerson(pool, a.assignee);
+      }
+      const existing = await recordsOf(ctx, "task", p).catch(() => []);
+      const number = existing.reduce((m, r) => Math.max(m, Number(r.data.number) || 0), 0) + 1;
+      const rec = { id: uid("tsk"), type: "task", projectId: p.id, data: {
+        number, title: String(a.title).trim().slice(0, 200), description: String(a.description || "").slice(0, 4000), assigneeId: assignee ? assignee.id : "",
+        due: a.due_date || "", priority: a.priority === "High" ? "High" : "Normal", status: "Open", createdBy: ctx.user.data.name, createdById: ctx.contactId, createdAt: now(), source: "Claude",
+        history: [history(ctx, "Task created (via Claude)")], updatedAt: now() } };
+      await save(ctx, rec);
+      return `Created task #${number} "${rec.data.title}" on ${p.data.name}${assignee ? " for " + assignee.data.name : ""}${rec.data.due ? ", due " + rec.data.due : ""}.\nOpen in app: ${appUrl(req, p, "tasks/" + rec.id)}`;
+    }
+    case "list_tasks": {
+      let list = [];
+      if (a.project) { const p = await findProject(ctx, a.project); list = (await recordsOf(ctx, "task", p)).map(r => ({ r, p })); }
+      else {
+        const ps = (await db.find(db.eq("Type", "project"))).filter(p => ctx.can(p.id, "tasks", "read"));
+        const all = await db.find(db.eq("Type", "task"));
+        list = all.map(r => ({ r, p: ps.find(p => p.id === r.projectId) })).filter(x => x.p);
+      }
+      if (a.mine || !a.project) list = list.filter(x => x.r.data.assigneeId && x.r.data.assigneeId === ctx.contactId);
+      if (!a.include_done) list = list.filter(x => x.r.data.status !== "Done");
+      const contacts = await db.find(db.eq("Type", "contact"));
+      list.sort((x, y) => String(x.r.data.due || "9999").localeCompare(String(y.r.data.due || "9999")));
+      return list.length ? list.slice(0, 60).map(({ r, p }) => `• #${r.data.number} [${r.data.status}] ${r.data.title} — ${p.data.name}${r.data.assigneeId ? ", " + contactName(contacts, r.data.assigneeId) : ""}${r.data.due ? ", due " + r.data.due : ""}`).join("\n") : "No tasks found.";
     }
     case "add_daily_log_note": {
       const p = await findProject(ctx, a.project);

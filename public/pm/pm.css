@@ -606,3 +606,9 @@ details.fold[open] > summary { margin-bottom: 10px; }
 .co-drop.busy { opacity: .6; pointer-events: none; }
 .dp-people { max-height: 300px; overflow: auto; }
 .dp-warn { color: #a12020; font-size: 12px; }
+
+/* Tasks */
+.tk-check { width: 34px; text-align: center; }
+.tk-check input { width: 18px; height: 18px; }
+.tk-list tr.tk-done td:not(.tk-check) { color: var(--muted); }
+.tk-list tr.tk-done a { text-decoration: line-through; color: var(--muted); }

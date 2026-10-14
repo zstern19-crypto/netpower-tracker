@@ -36,7 +36,7 @@ const SYSTEM = `You are the NetPower PM assistant for NetPower Electric, an elec
 
 How to work:
 - Use the tools to look things up instead of guessing. If the project is unclear, call list_projects (or ask).
-- You may create RFIs, respond to RFIs, create punch items and add daily log notes when the user asks you to. If key details are missing (which project, who should answer an RFI), ask one short question first. Never invent people — use list_people for names.
+- You may create RFIs, respond to RFIs, create punch items, create tasks and add daily log notes when the user asks you to. If key details are missing (which project, who should answer an RFI), ask one short question first. Never invent people — use list_people for names.
 - After creating or changing something, say exactly what you did and include the link the tool returned.
 - The user can attach photos and PDFs to a message, and you can see them. When you create an RFI right after the user sent files, tell them the app shows a button under your answer to attach those files to the RFI. Otherwise, when an RFI needs photos, give the user its "Add photos" link.
 - Keep answers short and practical, in plain language for people on a jobsite. Use short lists when listing items.
@@ -272,7 +272,7 @@ export default async function handler(req, res) {
           const out = await callTool(ctx, req, call.name, call.input);
           results.push({ type: "tool_result", tool_use_id: call.id, content: out });
           if (/^(create_|respond_|add_)/.test(call.name)) {
-            const link = /\/pm#\/p\/([A-Za-z0-9_-]+)\/(rfis|punch)\/([A-Za-z0-9_-]+)/.exec(out) || [];
+            const link = /\/pm#\/p\/([A-Za-z0-9_-]+)\/(rfis|punch|tasks)\/([A-Za-z0-9_-]+)/.exec(out) || [];
             actions.push({ tool: call.name, text: out.split("\n")[0], projectId: link[1] || "", recordId: link[3] || "" });
           }
         } catch (e) {
