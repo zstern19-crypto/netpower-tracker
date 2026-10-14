@@ -47,6 +47,7 @@ export async function checkRead(ctx, type, project) {
   if (type === "project" || type === "company" || type === "contact" || type === "cert" || type === "tool" || type === "setting") return;  // certs are filtered per user below
   if ((type === "deploy" || type === "mpplan") && !project) return ensure(ctx.isAdmin || ctx.projectIds.some(pid => ctx.can(pid, "manpower", "read")));
   if (type === "jobstatus" && !project) return;  // filtered to the user's projects below
+  if (type === "task" && !project) return;       // "My Tasks": filtered to projects where the user can see tasks
   if (type === "member" || type === "permtemplate") return ensure(ctx.isAdmin);
   ensure(project && ID_RE.test(project), "A project is required");
   const pid = await projectOf(type, project);
@@ -151,7 +152,9 @@ async function createUser({ name, email, password, companyAdmin, contactId, comp
 
   const now = new Date().toISOString();
   const records = [];
-  if (!contactId || !ID_RE.test(contactId) || !(await db.get(contactId))) {
+  const linked = contactId && ID_RE.test(contactId) ? await db.get(contactId) : null;
+  if (linked && (await db.find(db.eq("Type", "user"))).some(u => u.data.contactId === contactId)) throw httpError(400, "This person already has a login");
+  if (!linked || linked.type !== "contact") {
     contactId = "ct_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
     records.push({ id: contactId, type: "contact", projectId: "", data: { name, email, companyId: ID_RE.test(companyId || "") ? companyId : "" } });
   }
@@ -160,6 +163,10 @@ async function createUser({ name, email, password, companyAdmin, contactId, comp
     data: { name, email, companyAdmin: !!companyAdmin, active: true, contactId, sessionVersion: 1, createdAt: now, ...profile, ...auth.hashPassword(password) }
   };
   records.push(user);
+  // Crew who were deployed before they had a login: their deployments move to the new user
+  if (linked && linked.type === "contact") {
+    for (const d of await db.find(db.and([db.eq("Type", "deploy"), `FIND('"userId":"${contactId}"',{Data})`]))) records.push({ ...d, data: { ...d.data, userId: user.id } });
+  }
   await db.save(records);
   auth.clearCache();
   return user;
@@ -240,14 +247,19 @@ async function handleAction(req, res, action) {
 
   // Everyone: the crew list (names, photos, trades) for manpower, own profile, notifications
   if (action === "people") {
-    const [users, certs] = await Promise.all([db.find(db.eq("Type", "user")), db.find(db.eq("Type", "cert"))]);
+    const [users, certs, crew] = await Promise.all([db.find(db.eq("Type", "user")), db.find(db.eq("Type", "cert")),
+      db.find(db.and([db.eq("Type", "contact"), `FIND('"crew":true',{Data})`]))]);
     const alert = id => {
       const states = certs.filter(c => c.data.userId === id).map(c => notify.certState(c));
       return states.includes("expired") ? "expired" : states.includes("expiring") ? "expiring" : "";
     };
     return res.status(200).json({ ok: true, people: users.filter(u => u.data.active !== false).map(u => ({
       id: u.id, name: u.data.name, photo: u.data.photo || "", trade: u.data.trade || "", title: u.data.title || "", contactId: u.data.contactId || "",
-      ...(ctx.isAdmin ? { phone: u.data.phone || "", email: u.data.email, certAlert: alert(u.id) } : {}) })) });
+      ...(ctx.isAdmin ? { phone: u.data.phone || "", email: u.data.email, certAlert: alert(u.id) } : {}) }))
+      // Field crew from the Directory who don't have a login yet (deployed by their directory id)
+      .concat(crew.filter(c => !users.some(u => u.data.contactId === c.id)).map(c => ({
+        id: c.id, name: c.data.name, photo: c.data.photo || "", trade: c.data.trade || "", title: c.data.title || "", contactId: c.id, noLogin: true,
+        ...(ctx.isAdmin ? { phone: c.data.phone || "", email: c.data.email || "" } : {}) }))) });
   }
   if (action === "notifications") {
     const list = await auth.cached("notify:" + ctx.user.id, 60000, () => notify.forUser(ctx));
@@ -348,6 +360,7 @@ export default async function handler(req, res) {
       if (type === "cert" && !ctx.isAdmin) records = records.filter(r => r.data.userId === ctx.user.id);
       if ((type === "deploy" || type === "mpplan") && !project) records = records.filter(r => ctx.can(r.projectId, "manpower", "read"));
       if (type === "jobstatus" && !project) records = records.filter(r => ctx.isMember(r.projectId));
+      if (type === "task" && !project) records = records.filter(r => ctx.can(r.projectId, "tasks", "read"));
       records = records.filter(r => r.id && canSeePrivate(ctx, r));
       // Other people's markups: only what they've published
       if (type === "markup") records = records.map(r => (r.data.ownerId === ctx.contactId ? r
@@ -377,7 +390,7 @@ export default async function handler(req, res) {
         }
       }
       const result = await db.save(records, existing);
-      if (records.some(r => ["member", "permtemplate", "cert", "logsetting", "dailylog"].includes(r.type))) auth.clearCache();
+      if (records.some(r => ["member", "permtemplate", "cert", "logsetting", "dailylog", "changeorder", "task"].includes(r.type))) auth.clearCache();
       return res.status(200).json({ ok: true, ...result });
     }
 

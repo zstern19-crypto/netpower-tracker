@@ -196,7 +196,7 @@
       </tbody></table></div></div>`;
   }
 
-  function editUser(u) {
+  function editUser(u, preset = {}) {
     const isNew = !u;
     const contact = u ? Store.get(u.contactId) : null;
     const isSelf = u && PM.session && u.id === PM.session.user.id;
@@ -206,7 +206,7 @@
         <div class="field"><label for="usName">Full name <span class="req">*</span></label><input id="usName" value="${esc(u ? u.name : "")}"></div>
         <div class="field"><label for="usEmail">Email <span class="req">*</span></label><input id="usEmail" type="email" value="${esc(u ? u.email : "")}"></div>
         ${isNew ? `<div class="field"><label for="usCompany">Company</label><select id="usCompany"><option value=""></option>${PM.companies().map(c => `<option value="${c.id}">${esc(c.data.name)}</option>`).join("")}</select></div>
-          <div class="field"><label for="usContact">Link to existing person (optional)</label><select id="usContact"><option value="">— create a new directory entry —</option>${PM.contacts().map(c => `<option value="${c.id}">${esc(PM.contactLabel(c.id))}</option>`).join("")}</select></div>` : ""}
+          <div class="field"><label for="usContact">Link to existing person (optional)</label><select id="usContact"><option value="">— create a new directory entry —</option>${PM.contacts().map(c => `<option value="${c.id}" ${preset.contactId === c.id ? "selected" : ""}>${esc(PM.contactLabel(c.id))}</option>`).join("")}</select></div>` : ""}
         <div class="field"><label for="usPass">${isNew ? "Temporary password" : "Reset password (leave blank to keep)"} ${isNew ? '<span class="req">*</span>' : ""}</label><input id="usPass" type="text" autocomplete="off" placeholder="at least 8 characters"></div>
         <div class="field" style="align-self:end"><label class="inline-check"><input type="checkbox" id="usAdmin" ${u && u.companyAdmin ? "checked" : ""} ${isSelf ? "disabled" : ""}> Company admin (full access to everything)</label></div>
         ${isNew ? "" : `<div class="field"><label class="inline-check"><input type="checkbox" id="usActive" ${u.active ? "checked" : ""} ${isSelf ? "disabled" : ""}> Active (can sign in)</label></div>`}
@@ -220,6 +220,7 @@
           const c = Store.get(pick.value);
           if (c) { $("#usName", root).value = c.data.name; if (c.data.email) $("#usEmail", root).value = c.data.email; }
         };
+        if (pick && preset.contactId) { pick.onchange(); const c = Store.get(preset.contactId); if (c && c.data.companyId) $("#usCompany", root).value = c.data.companyId; }
       },
       onSave: async root => {
         const body = {
@@ -400,5 +401,5 @@
     return usersPage();
   }
 
-  PM.auth = { showLogin, userMenu, adminPage, projectPermissions };
+  PM.auth = { showLogin, userMenu, adminPage, projectPermissions, editUser };
 })();

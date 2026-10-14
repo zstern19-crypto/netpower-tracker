@@ -189,7 +189,7 @@
     });
   }
   // Route segment → permission tool
-  const ROUTE_TOOL = { rfis: "rfis", submittals: "submittals", dailylog: "dailylog", punch: "punch", drawings: "drawings", specs: "specs", photos: "photos", inspections: "inspections", changeorders: "changeorders", team: "directory" };
+  const ROUTE_TOOL = { rfis: "rfis", submittals: "submittals", dailylog: "dailylog", punch: "punch", drawings: "drawings", specs: "specs", photos: "photos", inspections: "inspections", changeorders: "changeorders", tasks: "tasks", team: "directory" };
 
   function contactName(id) { const c = Store.get(id); return c ? c.data.name : ""; }
   function companyName(id) { const c = Store.get(id); return c ? c.data.name : ""; }
@@ -374,6 +374,7 @@
     ["photos", "Photos", "photos", "photos?upload=1"],
     ["inspections", "Inspections", "inspections", "inspections?new=1"],
     ["changeorders", "Change Orders", "changeorders", null],
+    ["tasks", "Tasks", "tasks", "tasks?new=1"],
     ["specs", "Specifications", "specs", null]
   ];
 
@@ -432,6 +433,7 @@
       ["photos", "Photos", Store.all("jphoto", p.id).length || ""],
       ["inspections", "Inspections", Store.all("inspection", p.id).filter(r => r.data.status === "Scheduled").length || ""],
       ["changeorders", "Change Orders", Store.all("changeorder", p.id).filter(r => r.data.status === "Pending").length || ""],
+      ["tasks", "Tasks", Store.all("task", p.id).filter(r => r.data.status !== "Done").length || ""],
       ["specs", "Specifications", Store.all("spec", p.id).length || ""],
       ["team", "Project Directory", ((p.data.team || []).length) || ""],
       ...(isCompanyAdmin() && Store.mode !== "local" ? [["permissions", "Permissions", ""]] : [])
@@ -468,11 +470,11 @@
           current.tool = parts[2] || "home";
           // Load only what this user may see
           const LOADS = [["rfi", "rfis"], ["submittal", "submittals"], ["dailylog", "dailylog"], ["punch", "punch"],
-            ["drawing", "drawings"], ["markup", "drawings"], ["drawset", "drawings"], ["spec", "specs"], ["subpackage", "submittals"], ["jphoto", "photos"], ["logsetting", "dailylog"], ["inspection", "inspections"], ["changeorder", "changeorders"], ["equipment", "submittals"], ["lookup", null]];
+            ["drawing", "drawings"], ["markup", "drawings"], ["drawset", "drawings"], ["spec", "specs"], ["subpackage", "submittals"], ["jphoto", "photos"], ["logsetting", "dailylog"], ["inspection", "inspections"], ["changeorder", "changeorders"], ["equipment", "submittals"], ["task", "tasks"], ["lookup", null]];
           await Promise.all(LOADS.filter(([, tool]) => !tool || can(p.id, tool)).map(([t]) => Store.load(t, p.id)));
           const sub = parts[3];
           // A link to something created elsewhere (e.g. by Claude) since this page loaded: fetch it again
-          const SUB_TYPE = { rfis: "rfi", submittals: "submittal", punch: "punch", drawings: "drawing", changeorders: "changeorder" }[current.tool];
+          const SUB_TYPE = { rfis: "rfi", submittals: "submittal", punch: "punch", drawings: "drawing", changeorders: "changeorder", tasks: "task" }[current.tool];
           if (SUB_TYPE && sub && /^[a-z]+_[a-z0-9]+$/.test(sub) && !Store.get(sub) && Store.mode !== "local" && can(p.id, ROUTE_TOOL[current.tool])) {
             Store.loaded.delete(SUB_TYPE + "|" + p.id);
             await Store.load(SUB_TYPE, p.id);
@@ -496,6 +498,7 @@
             photos: () => PM.photos ? PM.photos.page(p, query) : `<div class="empty">Photos module failed to load.</div>`,
             inspections: () => PM.inspections ? PM.inspections.page(p, query) : `<div class="empty">Inspections module failed to load.</div>`,
             changeorders: () => PM.changeorders ? PM.changeorders.page(p, sub) : `<div class="empty">Change orders module failed to load.</div>`,
+            tasks: () => PM.tasks ? PM.tasks.page(p, sub, query) : `<div class="empty">Tasks module failed to load.</div>`,
             drawings: () => PM.drawings ? (sub === "review" ? PM.drawings.review(p, parts[4]) : sub ? PM.drawings.viewer(p, sub, query) : PM.drawings.log(p)) : `<div class="empty">Drawings module failed to load.</div>`
           }[current.tool] || (() => `<div class="empty">Unknown tool.</div>`);
         }
@@ -508,6 +511,9 @@
       } else if (parts[0] === "manpower" && PM.people) {
         current.nav = "manpower";
         view = () => PM.people.page(parts[1], query);
+      } else if (parts[0] === "tasks" && PM.tasks) {
+        current.nav = "tasks";
+        view = () => PM.tasks.myTasks();
       } else if (parts[0] === "jobs" && PM.jobs) {
         current.nav = "portfolio";
         view = () => PM.jobs.page(parts[1]);
@@ -623,6 +629,51 @@
     });
   }
   ACTIONS.newProject = () => editProject(null);
+
+  // ── Paste a list: one name per line (skips names that already exist)
+  const pasteLines = t => [...new Set(String(t || "").split(/\r?\n/).map(x => x.replace(/\s+/g, " ").trim()).filter(Boolean))];
+  ACTIONS.bulkProjects = () => openModal({
+    title: "Add several projects",
+    saveLabel: "Add projects",
+    body: `<div class="field"><label for="bpNames">Project names — one per line</label><textarea id="bpNames" rows="8" placeholder="16 Convent Ave&#10;2 Mimi Ct"></textarea></div>
+      <div class="field"><label for="bpStatus">Status</label><select id="bpStatus">${PROJECT_STATUSES.map(x => `<option ${x === "Active" ? "selected" : ""}>${x}</option>`).join("")}</select></div>
+      <p class="muted" style="font-size:13px">Names that already exist are skipped. Add addresses and the rest later with “Edit Project”.</p>`,
+    onSave: async root => {
+      const have = new Set(Store.all("project").map(p => p.data.name.trim().toLowerCase()));
+      const names = pasteLines($("#bpNames", root).value).filter(n => !have.has(n.toLowerCase()));
+      if (!names.length) { toast("Nothing new to add", true); return false; }
+      const now = new Date().toISOString(), status = $("#bpStatus", root).value;
+      try { await Store.saveMany(names.map(name => withHistory({ id: uid("prj"), type: "project", projectId: "", data: { name, status, team: [], createdAt: now, createdBy: meName() } }, "Project created"))); }
+      catch (e) { toast("Not saved: " + e.message, true); return false; }
+      toast(`${names.length} project${names.length === 1 ? "" : "s"} added`);
+    }
+  });
+  ACTIONS.bulkPeople = () => {
+    const own = companies().find(c => /net\s*power/i.test(c.data.name));
+    openModal({
+      title: "Add people from a list",
+      saveLabel: "Add people",
+      body: `<div class="field"><label for="blNames">Names — one per line</label><textarea id="blNames" rows="10" placeholder="Hugo Alva&#10;Juan Chumil"></textarea></div>
+        <div class="form-grid"><div class="field"><label for="blCo">Company</label><select id="blCo"><option value="">${own ? "" : "NetPower Electric (create it)"}</option>${companies().map(c => `<option value="${c.id}" ${own && own.id === c.id ? "selected" : ""}>${esc(c.data.name)}</option>`).join("")}</select></div>
+          <div class="field"><label for="blTitle">Job title (optional)</label><input id="blTitle" placeholder="e.g. Electrician"></div></div>
+        <label class="inline-check"><input type="checkbox" id="blCrew" checked> Field crew — they show up in Manpower for deploying (no logins; you can give someone a login later)</label>
+        <p class="muted" style="font-size:13px">Names already in the Directory are skipped.</p>`,
+      onSave: async root => {
+        const have = new Set(contacts().map(c => c.data.name.trim().toLowerCase()));
+        const names = pasteLines($("#blNames", root).value).filter(n => !have.has(n.toLowerCase()));
+        if (!names.length) { toast("Nothing new to add", true); return false; }
+        let companyId = $("#blCo", root).value;
+        const recs = [];
+        if (!companyId) { companyId = uid("co"); recs.push({ id: companyId, type: "company", projectId: "", data: { name: "NetPower Electric", companyType: "Subcontractor", trade: "Electrical" } }); }
+        const title = $("#blTitle", root).value.trim(), crew = $("#blCrew", root).checked;
+        names.forEach(name => recs.push({ id: uid("ct"), type: "contact", projectId: "", data: { name, companyId, title, crew, trade: "Electrical" } }));
+        try { await Store.saveMany(recs); } catch (e) { toast("Not saved: " + e.message, true); return false; }
+        if (PM.people) PM.people.invalidate();
+        toast(`${names.length} ${names.length === 1 ? "person" : "people"} added`);
+      }
+    });
+  };
+  ACTIONS.giveLogin = el => PM.auth && PM.auth.editUser(null, { contactId: el.dataset.id });
   ACTIONS.editProject = el => editProject(Store.get(el.dataset.id));
 
   function portfolio() {
@@ -646,7 +697,7 @@
     const totalValue = all.filter(p => p.data.status === "Active").reduce((s, p) => s + (Number(p.data.value) || 0), 0);
     return `
       <div class="page-head"><h1>Portfolio</h1><span class="sub">${all.length} project${all.length === 1 ? "" : "s"}</span>
-        <div class="actions"><button class="btn primary" data-perm="company:admin" data-act="newProject">+ Create Project</button></div></div>
+        <div class="actions"><button class="btn" data-perm="company:admin" data-act="bulkProjects">Add several…</button><button class="btn primary" data-perm="company:admin" data-act="newProject">+ Create Project</button></div></div>
       ${PM.jobs ? `<div class="tabs"><a href="#/" class="on">Projects</a><a href="#/jobs">Job Tracker</a></div>` : ""}
       ${isCompanyAdmin() ? `<div class="cards">
         <div class="card"><div class="num">${by("Active")}</div><div class="lbl">Active projects</div></div>
@@ -680,6 +731,7 @@
     { k: "trade", label: "Trade", type: "select", options: TRADES },
     { k: "email", label: "Email", type: "email" },
     { k: "phone", label: "Phone", type: "tel" },
+    { k: "crew", label: "Field crew — shows in Manpower for deploying (no login needed)", type: "checkbox", full: true },
     { k: "notes", label: "Notes", type: "textarea" }
   ];
 
@@ -728,10 +780,10 @@
         const rows = contacts().filter(c => matchFilter(key, c, [c.data.name, companyName(c.data.companyId), c.data.title, c.data.email, c.data.trade].join(" "), true));
         if (!rows.length) return `<tr><td colspan="7" class="empty">No people yet.</td></tr>`;
         return rows.map(c => `<tr>
-          <td><strong>${esc(c.data.name)}</strong></td><td>${esc(companyName(c.data.companyId))}</td><td>${esc(c.data.title)}</td><td>${esc(c.data.trade)}</td>
+          <td><strong>${esc(c.data.name)}</strong>${c.data.crew ? ` <span class="pill draft" title="Shows in Manpower">Crew</span>` : ""}</td><td>${esc(companyName(c.data.companyId))}</td><td>${esc(c.data.title)}</td><td>${esc(c.data.trade)}</td>
           <td>${c.data.email ? `<a href="mailto:${esc(c.data.email)}">${esc(c.data.email)}</a>` : ""}</td>
           <td class="nowrap">${c.data.phone ? `<a href="tel:${esc(c.data.phone)}">${esc(c.data.phone)}</a>` : ""}</td>
-          <td class="nowrap"><button class="btn small" data-perm="company:admin" data-act="editContact" data-id="${c.id}">Edit</button> <button class="btn small danger" data-perm="company:admin" data-act="deleteRecord" data-id="${c.id}" data-label="person">Delete</button></td></tr>`).join("");
+          <td class="nowrap">${Store.mode !== "local" && isCompanyAdmin() && c.data.crew ? `<button class="btn small" data-act="giveLogin" data-id="${c.id}" title="Create an app login for this person">Give login</button> ` : ""}<button class="btn small" data-perm="company:admin" data-act="editContact" data-id="${c.id}">Edit</button> <button class="btn small danger" data-perm="company:admin" data-act="deleteRecord" data-id="${c.id}" data-label="person">Delete</button></td></tr>`).join("");
       };
     } else {
       LIST_RENDERERS[key] = () => {
@@ -751,7 +803,7 @@
       : "<th>Company</th><th>Type</th><th>Trade</th><th>Phone</th><th>Email</th><th>People</th><th></th>";
     return `
       <div class="page-head"><h1>Company Directory</h1>
-        <div class="actions"><button class="btn" data-perm="company:admin" data-act="newCompany">+ Add Company</button><button class="btn primary" data-perm="company:admin" data-act="newContact">+ Add Person</button></div></div>
+        <div class="actions"><button class="btn" data-perm="company:admin" data-act="newCompany">+ Add Company</button>${tab === "people" ? `<button class="btn" data-perm="company:admin" data-act="bulkPeople">Paste a list…</button>` : ""}<button class="btn primary" data-perm="company:admin" data-act="newContact">+ Add Person</button></div></div>
       <div class="panel flush">
         <div class="toolbar">
           <a class="btn ${tab === "companies" ? "primary" : ""}" href="#/directory/companies">Companies (${Store.all("company").length})</a>
@@ -876,6 +928,7 @@
         </div>
         <div>
           ${PM.people ? PM.people.crewPanel(p, today(), { title: "Crew on site today" }) : ""}
+          ${PM.tasks ? PM.tasks.homePanel(p) : ""}
           ${PM.jobs ? PM.jobs.homePanel(p) : ""}
           ${PM.inspections ? PM.inspections.homePanel(p) : ""}
           <div class="panel"><h2>Project Information</h2>

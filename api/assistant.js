@@ -36,7 +36,7 @@ const SYSTEM = `You are the NetPower PM assistant for NetPower Electric, an elec
 
 How to work:
 - Use the tools to look things up instead of guessing. If the project is unclear, call list_projects (or ask).
-- You may create RFIs, respond to RFIs, create punch items and add daily log notes when the user asks you to. If key details are missing (which project, who should answer an RFI), ask one short question first. Never invent people — use list_people for names.
+- You may create RFIs, respond to RFIs, create punch items, create tasks and add daily log notes when the user asks you to. If key details are missing (which project, who should answer an RFI), ask one short question first. Never invent people — use list_people for names.
 - After creating or changing something, say exactly what you did and include the link the tool returned.
 - The user can attach photos and PDFs to a message, and you can see them. When you create an RFI right after the user sent files, tell them the app shows a button under your answer to attach those files to the RFI. Otherwise, when an RFI needs photos, give the user its "Add photos" link.
 - Keep answers short and practical, in plain language for people on a jobsite. Use short lists when listing items.
@@ -129,6 +129,42 @@ async function readSchedules(ctx, st, b, res) {
   items = items.filter(x => x && (x.tag || x.description)).slice(0, 500);
   return res.status(200).json({ ok: true, items, usage: { costUsd: Math.round(cost * 10000) / 10000 } });
 }
+// ── A change order / proposal PDF → the fields for a new change order
+const CO_SCHEMA = {
+  type: "object", additionalProperties: false, required: ["title", "amount", "submitted", "description", "documentNumber", "isChangeOrder"],
+  properties: {
+    isChangeOrder: { type: "boolean", description: "false if this document is not a change order, proposal, quote or pricing for extra work" },
+    title: { type: "string", description: "Short title of the change, e.g. 'Add 4 receptacles in conference room'" },
+    amount: { anyOf: [{ type: "number" }, { type: "null" }], description: "Total price in dollars (negative for a credit); null if not stated" },
+    submitted: { type: "string", description: "Date on the document as YYYY-MM-DD, or empty" },
+    documentNumber: { type: "string", description: "The CO / proposal / PCO number printed on the document, or empty" },
+    description: { type: "string", description: "Scope of work in plain sentences, plus a short price breakdown (labor / material / markup) if the document has one" }
+  }
+};
+async function readChangeOrder(ctx, st, b, res) {
+  const pid = String(b.projectId || "");
+  auth.ensure(db.ID_RE.test(pid) && ctx.can(pid, "changeorders", "standard"), "You need Change Orders access on this project");
+  const f = b.file || {};
+  const block = /\.pdf$/i.test(String(f.name || "")) ? { type: "document", source: { type: "file", file_id: String(f.fileId || "") }, title: String(f.name).slice(0, 120) }
+    : { type: "image", source: { type: "file", file_id: String(f.fileId || "") } };
+  checkFiles(ctx, [{ role: "user", content: [block] }], b.fileSigs || {});
+  const used = await usage();
+  if (used.costUsd >= st.capUsd) throw auth.httpError(402, `This month's AI limit ($${st.capUsd}) has been reached. A company admin can raise it in the assistant settings.`, "CAP_REACHED");
+  const response = await new Anthropic().messages.stream({
+    model: MODEL,
+    max_tokens: 16000,
+    output_config: { effort: "low", format: { type: "json_schema", schema: CO_SCHEMA } },
+    messages: [{ role: "user", content: [block, { type: "text", text:
+      "This document was dropped into the Change Orders log of NetPower Electric (an electrical contractor). Fill in the change order fields from it. Use only what the document says; leave fields empty (or null) when it doesn't say." }] }]
+  }).finalMessage();
+  const cost = costOf(response.model, response.usage || {});
+  await recordSpend(ctx, cost);
+  if (response.stop_reason === "refusal") throw auth.httpError(422, "The AI couldn't read this file.");
+  let co;
+  try { co = JSON.parse(response.content.filter(x => x.type === "text").map(x => x.text).join("")); } catch (e) { throw auth.httpError(502, "The AI's answer couldn't be read — try again."); }
+  return res.status(200).json({ ok: true, changeOrder: co, usage: { costUsd: Math.round(cost * 10000) / 10000 } });
+}
+
 async function recordSpend(ctx, cost) {
   const fresh = await usage();
   const by = { ...(fresh.byUser || {}) };
@@ -177,6 +213,7 @@ export default async function handler(req, res) {
     }
 
     if (req.query && req.query.action === "schedules") return await readSchedules(ctx, st, b, res);
+    if (req.query && req.query.action === "changeorder") return await readChangeOrder(ctx, st, b, res);
 
     const text = String(b.text || "").trim().slice(0, 4000);
     const files = (Array.isArray(b.files) ? b.files : []).slice(0, 10);
@@ -235,7 +272,7 @@ export default async function handler(req, res) {
           const out = await callTool(ctx, req, call.name, call.input);
           results.push({ type: "tool_result", tool_use_id: call.id, content: out });
           if (/^(create_|respond_|add_)/.test(call.name)) {
-            const link = /\/pm#\/p\/([A-Za-z0-9_-]+)\/(rfis|punch)\/([A-Za-z0-9_-]+)/.exec(out) || [];
+            const link = /\/pm#\/p\/([A-Za-z0-9_-]+)\/(rfis|punch|tasks)\/([A-Za-z0-9_-]+)/.exec(out) || [];
             actions.push({ tool: call.name, text: out.split("\n")[0], projectId: link[1] || "", recordId: link[3] || "" });
           }
         } catch (e) {
