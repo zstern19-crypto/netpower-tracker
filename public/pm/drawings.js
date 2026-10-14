@@ -102,7 +102,12 @@
 
   // Files in a private Blob store can only be read through short-lived signed links
   const signedCache = new Map();  // fileUrl → { url, exp }
+  // The URL to show a file with: through the offline helper (saved copy, or kept for offline) when it's available
   async function readableUrl(fileUrl) {
+    if (PM.offline && /^https:\/\//.test(fileUrl)) return PM.offline.fileUrlFor(fileUrl, () => signedUrl(fileUrl));
+    return signedUrl(fileUrl);
+  }
+  async function signedUrl(fileUrl) {
     if (!/\.private\.blob\.vercel-storage\.com\//.test(fileUrl)) return fileUrl;
     const c = signedCache.get(fileUrl);
     if (c && c.exp > Date.now() + 5 * 60 * 1000) return c.url;
@@ -139,7 +144,9 @@
       }
       // Range requests: only the bytes needed for the viewed page are downloaded
       const url = await readableUrl(fileUrl);
-      return lib.getDocument({ url, rangeChunkSize: 262144, disableAutoFetch: true, disableStream: true }).promise;
+      const doc = await lib.getDocument({ url, rangeChunkSize: 262144, disableAutoFetch: true, disableStream: true }).promise;
+      if (PM.offline) PM.offline.keepOpened(fileUrl);   // smaller sets are kept on the phone for offline viewing
+      return doc;
     })();
     docCache.set(fileUrl, p);
     p.catch(() => docCache.delete(fileUrl));
@@ -2049,5 +2056,5 @@
   }
 
   PM.drawings = { review, pendingSets, log, viewer, linksPanel, rfiMarkupsPanel, detectSheet, disciplineFor, sheetsOf, currentRev, sheetPdf, sheetImage };
-  PM.files = { upload: uploadFile, readableUrl, fileObjectUrl, deleteFiles };
+  PM.files = { upload: uploadFile, readableUrl, signedUrl, fileObjectUrl, deleteFiles };
 })();

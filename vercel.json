@@ -17,16 +17,30 @@
       "destination": "/api/:path*"
     },
     {
-      "source": "/pm",
-      "destination": "/pm/index.html"
-    },
-    {
       "source": "/pm/",
       "destination": "/pm/index.html"
     },
     {
       "source": "/((?!pm/).*)",
       "destination": "/index.html"
+    }
+  ],
+  "redirects": [
+    {
+      "source": "/pm",
+      "destination": "/pm/",
+      "permanent": false
+    }
+  ],
+  "headers": [
+    {
+      "source": "/pm/sw.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache"
+        }
+      ]
     }
   ]
 }

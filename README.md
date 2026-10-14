@@ -41,6 +41,10 @@ Modules:
 - **Daily log reminders** — per project: work days or weekly, due time, foremen to remind, PMs to notify after a delay; shown in the 🔔 notifications
 - **🔔 Notifications** — tap one and it's marked read (gone on every device); **Mark all read** clears the list. If the
   situation changes (another missed day, a new due date) it shows again as new
+- **Offline viewing (iPhone + Android)** — the app keeps a copy of what you look at; with no signal it opens from that
+  copy with an "Offline" bar (view only — saving needs signal). On a job's home page, **Save this job for offline**
+  downloads its data, current drawings, specs and attachments (optionally jobsite photos). Signing out clears it.
+  Works best from the home-screen app (iPhone: Safari → Share → Add to Home Screen; Android: Chrome ⋮ → Install app)
 - **Phone notifications** — your name → Notification settings: turn on per phone (iPhone: from the home-screen app),
   pick what you get (assigned to me / ball in my court, RFI responses, change orders, morning summary). The morning
   summary runs from `/api/cron` once a day (`vercel.json` → `crons`, 11:00 UTC ≈ 7 AM EDT / 6 AM EST); change the
