@@ -39,6 +39,12 @@ Modules:
 - **Manpower Chart** (Manpower → Manpower Chart) — jobs × this week's and next week's days, 2 later weeks and 4 months, like the office spreadsheet: day boxes count who is deployed (or a typed number), click a day to see/add/remove the guys; later weeks and months are typed numbers; totals and missing/extra against company headcount (company admins set it)
 - **Certifications** (Manpower → Certifications) — OSHA etc. per person with card upload and 30-day expiry alerts
 - **Daily log reminders** — per project: work days or weekly, due time, foremen to remind, PMs to notify after a delay; shown in the 🔔 notifications
+- **🔔 Notifications** — tap one and it's marked read (gone on every device); **Mark all read** clears the list. If the
+  situation changes (another missed day, a new due date) it shows again as new
+- **Phone notifications** — your name → Notification settings: turn on per phone (iPhone: from the home-screen app),
+  pick what you get (assigned to me / ball in my court, RFI responses, change orders, morning summary). The morning
+  summary runs from `/api/cron` once a day (`vercel.json` → `crons`, 11:00 UTC ≈ 7 AM EDT / 6 AM EST); change the
+  time by editing that schedule. On the Vercel Hobby plan it runs once a day within the hour you set
 - **Voice to text** — 🎤 on RFI subject, question and responses (browser speech recognition: Chrome, Edge, Safari)
 - **Drawing review** — new uploads wait in "Pending review" (only drawing admins see them): fix sheet info, compare each revision side-by-side or as a red/green overlay, then publish or reject
 - **RFI / Submittal export** — Export ▾: PDF with a Procore-style cover sheet (logo, company letterhead, project, all fields, question/responses or approval workflow), followed by the attached PDFs and photos merged in (built in the browser with pdf-lib); Email with the PDF attached (computer: downloads an Outlook email draft `.eml`; phone: share sheet); plain email; view-only links for RFIs (`/pm/share.html`). Company admins set the letterhead under Admin → Company Letterhead

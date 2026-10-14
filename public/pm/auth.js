@@ -106,6 +106,7 @@
       <div class="um-head"><strong>${esc(u.name)}</strong><div class="muted">${esc(u.email)}</div>${PM.session.isAdmin ? `<span class="pill admin-pill">Company admin</span>` : ""}</div>
       ${PM.session.isAdmin ? `<a href="#/admin/users" role="menuitem">Users</a><a href="#/admin/templates" role="menuitem">Permission Templates</a>` : ""}
       <a href="#" data-um="profile" role="menuitem">My profile (photo, trade, phone)</a>
+      <a href="#/notifications" role="menuitem">🔔 Notification settings</a>
       <a href="#" data-um="claude" role="menuitem">Connect Claude</a>
       <a href="#" data-um="password" role="menuitem">Change password</a>
       <a href="#" data-um="logout" role="menuitem">Sign out</a>`;
