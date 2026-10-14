@@ -135,12 +135,30 @@ const CO_SCHEMA = {
   properties: {
     isChangeOrder: { type: "boolean", description: "false if this document is not a change order, proposal, quote or pricing for extra work" },
     title: { type: "string", description: "Short title of the change, e.g. 'Add 4 receptacles in conference room'" },
-    amount: { anyOf: [{ type: "number" }, { type: "null" }], description: "Total price in dollars (negative for a credit); null if not stated" },
+    amount: { type: "string", description: "Total price in dollars as a plain number like 4850.50 (negative for a credit), or empty if not stated" },
     submitted: { type: "string", description: "Date on the document as YYYY-MM-DD, or empty" },
     documentNumber: { type: "string", description: "The CO / proposal / PCO number printed on the document, or empty" },
     description: { type: "string", description: "Scope of work in plain sentences, plus a short price breakdown (labor / material / markup) if the document has one" }
   }
 };
+// Structured output first; if the API refuses that request shape (400), fall back to plain JSON in the text
+async function readJSON(params, schema) {
+  const client = new Anthropic();
+  let response;
+  try {
+    response = await client.messages.stream({ ...params, output_config: { ...(params.output_config || {}), format: { type: "json_schema", schema } } }).finalMessage();
+  } catch (e) {
+    if (!(e instanceof Anthropic.APIError) || e.status !== 400 || /credit|balance|billing/i.test(e.message)) throw e;
+    console.error("Structured output refused, retrying as plain JSON:", e.message);
+    const messages = params.messages.map((m, i) => i === params.messages.length - 1 ? { ...m, content: [...m.content, { type: "text", text: "Answer with only a JSON object matching this JSON schema, no other text:\n" + JSON.stringify(schema) }] } : m);
+    response = await client.messages.stream({ ...params, messages }).finalMessage();
+  }
+  const text = response.content.filter(x => x.type === "text").map(x => x.text).join("");
+  let data = null;
+  try { data = JSON.parse(text); } catch (e) { const m = /\{[\s\S]*\}/.exec(text); if (m) { try { data = JSON.parse(m[0]); } catch (e2) { /* unreadable */ } } }
+  return { response, data };
+}
+
 async function readChangeOrder(ctx, st, b, res) {
   const pid = String(b.projectId || "");
   auth.ensure(db.ID_RE.test(pid) && ctx.can(pid, "changeorders", "standard"), "You need Change Orders access on this project");
@@ -150,18 +168,19 @@ async function readChangeOrder(ctx, st, b, res) {
   checkFiles(ctx, [{ role: "user", content: [block] }], b.fileSigs || {});
   const used = await usage();
   if (used.costUsd >= st.capUsd) throw auth.httpError(402, `This month's AI limit ($${st.capUsd}) has been reached. A company admin can raise it in the assistant settings.`, "CAP_REACHED");
-  const response = await new Anthropic().messages.stream({
+  const { response, data: co } = await readJSON({
     model: MODEL,
     max_tokens: 16000,
-    output_config: { effort: "low", format: { type: "json_schema", schema: CO_SCHEMA } },
+    output_config: { effort: "low" },
     messages: [{ role: "user", content: [block, { type: "text", text:
       "This document was dropped into the Change Orders log of NetPower Electric (an electrical contractor). Fill in the change order fields from it. Use only what the document says; leave fields empty (or null) when it doesn't say." }] }]
-  }).finalMessage();
+  }, CO_SCHEMA);
   const cost = costOf(response.model, response.usage || {});
   await recordSpend(ctx, cost);
   if (response.stop_reason === "refusal") throw auth.httpError(422, "The AI couldn't read this file.");
-  let co;
-  try { co = JSON.parse(response.content.filter(x => x.type === "text").map(x => x.text).join("")); } catch (e) { throw auth.httpError(502, "The AI's answer couldn't be read — try again."); }
+  if (!co) throw auth.httpError(502, "The AI's answer couldn't be read — try again.");
+  const amt = parseFloat(String(co.amount == null ? "" : co.amount).replace(/[$,\s]/g, "").replace(/^\((.*)\)$/, "-$1"));
+  co.amount = Number.isFinite(amt) ? amt : null;
   return res.status(200).json({ ok: true, changeOrder: co, usage: { costUsd: Math.round(cost * 10000) / 10000 } });
 }
 
@@ -291,7 +310,9 @@ export default async function handler(req, res) {
       usage: { costUsd: Math.round(cost * 10000) / 10000, monthCostUsd: Math.round(next.costUsd * 100) / 100, capUsd: st.capUsd } });
   } catch (err) {
     if (err instanceof Anthropic.APIError) {
-      const msg = err.status === 429 ? "The AI service is busy — try again in a minute." : err.status === 401 ? "The AI service rejected the server's API key." : "The AI service had a problem (" + err.status + "). Try again.";
+      console.error("Anthropic API error", err.status, err.message);   // shows in the Vercel function logs
+      const detail = (err.error && err.error.error && err.error.error.message) || "";
+      const msg = err.status === 429 ? "The AI service is busy — try again in a minute." : err.status === 401 ? "The AI service rejected the server's API key." : err.status === 400 && /credit|balance|billing/i.test(detail) ? "The Anthropic account is out of credit — top it up in the Anthropic Console." : "The AI service had a problem (" + err.status + (detail ? ": " + detail.slice(0, 200) : "") + ").";
       return res.status(502).json({ ok: false, error: msg });
     }
     auth.sendError(res, err);
