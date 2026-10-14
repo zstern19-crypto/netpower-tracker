@@ -13,15 +13,19 @@
 //   POST   /api/pm  { records: [{ id, type, projectId, data }] }   (upsert by id)
 //   DELETE /api/pm?id=abc[&children=1]
 
+import crypto from "node:crypto";
 import * as db from "../lib/db.js";
 import * as auth from "../lib/auth.js";
 import * as notify from "../lib/notify.js";
+import * as push from "../lib/push.js";
 
 const { ID_RE } = db;
 const { TYPE_TOOL, ensure, httpError } = auth;
 const TYPES = ["project", "company", "contact", "lookup", "member", "permtemplate", "cert", "tool", "setting", ...Object.keys(TYPE_TOOL)];
 // Tool tracker: everyone may check tools out/in (these fields); only company admins edit the inventory
 const TOOL_MOVE_FIELDS = ["checkout", "history", "condition", "conditionNote", "updatedAt"];
+// A notification's identity: if its wording changes (another missed day, a new due date) it shows again as new
+const noteKey = x => crypto.createHash("sha256").update([x.kind, x.href, x.text].join("|")).digest("hex").slice(0, 16);
 const PRIVATE_TYPES = ["rfi", "submittal"];
 
 // ── Helpers ──
@@ -184,7 +188,7 @@ async function handleAction(req, res, action) {
     return res.status(200).json({ ok: true, user: auth.publicUser(ctx.user), isAdmin: ctx.isAdmin, perms: ctx.perms, tools: auth.TOOLS, levels: auth.LEVELS });
   }
 
-  if (req.method !== "POST" && !["users", "people", "notifications", "shared"].includes(action)) throw httpError(405, "Method not allowed");
+  if (req.method !== "POST" && !["users", "people", "notifications", "shared", "pushPrefs"].includes(action)) throw httpError(405, "Method not allowed");
 
   if (action === "setup") {
     ensure((await db.find(db.eq("Type", "user"))).length === 0, "Setup has already been completed — please sign in");
@@ -261,9 +265,37 @@ async function handleAction(req, res, action) {
         id: c.id, name: c.data.name, photo: c.data.photo || "", trade: c.data.trade || "", title: c.data.title || "", contactId: c.id, noLogin: true,
         ...(ctx.isAdmin ? { phone: c.data.phone || "", email: c.data.email || "" } : {}) }))) });
   }
+  // Phone push notifications: settings, this phone on/off, test
+  if (action === "pushPrefs") {
+    if (req.method === "POST") return res.status(200).json({ ok: true, prefs: await push.savePrefs(ctx.user.id, b.prefs) });
+    const [prefs, devices] = await Promise.all([push.prefs(ctx.user.id), push.devices(ctx.user)]);
+    return res.status(200).json({ ok: true, publicKey: await push.publicKey(), prefs, devices, categories: push.CATEGORIES.map(([k, label, help]) => ({ k, label, help })) });
+  }
+  if (action === "pushSubscribe") { await push.subscribe(ctx.user, b.subscription, req.headers["user-agent"]); return res.status(200).json({ ok: true }); }
+  if (action === "pushUnsubscribe") { await push.unsubscribe(ctx.user, String(b.endpoint || "")); return res.status(200).json({ ok: true }); }
+  if (action === "pushTest") {
+    const n = await push.sendToUsers([ctx.user.id], b.category || "assigned", { title: "NetPower PM", body: "Notifications are working on this phone ✓", url: "/pm/", tag: "test" }, { force: true });
+    return res.status(200).json({ ok: true, sent: n });
+  }
+  // 🔔 list without the ones this person already read (read state syncs across their phone and computer)
   if (action === "notifications") {
-    const list = await auth.cached("notify:" + ctx.user.id, 60000, () => notify.forUser(ctx));
+    const list = await auth.cached("notify:" + ctx.user.id, 60000, async () => {
+      const [items, read] = await Promise.all([notify.forUser(ctx), db.get("nread_" + ctx.user.id)]);
+      const seen = (read && read.data.keys) || {};
+      return items.map(x => ({ ...x, key: noteKey(x) })).filter(x => !seen[x.key]);
+    });
     return res.status(200).json({ ok: true, notifications: list });
+  }
+  if (action === "notificationsRead") {
+    const keys = (Array.isArray(b.keys) ? b.keys : []).map(String).filter(k => /^[a-f0-9]{16}$/.test(k)).slice(0, 200);
+    if (keys.length) {
+      const rec = await db.get("nread_" + ctx.user.id), now = Date.now(), cutoff = now - 60 * 86400000;
+      const kept = Object.entries((rec && rec.data.keys) || {}).filter(([, t]) => Date.parse(t) > cutoff).sort((x, y) => y[1].localeCompare(x[1])).slice(0, 800);
+      const all = { ...Object.fromEntries(kept), ...Object.fromEntries(keys.map(k => [k, new Date(now).toISOString()])) };
+      await db.save([{ id: "nread_" + ctx.user.id, type: "notifread", projectId: ctx.user.id, data: { keys: all } }]);
+      auth.clearCache("notify:" + ctx.user.id);
+    }
+    return res.status(200).json({ ok: true });
   }
   // Claude connector link (per user; the secret is shown once, only its hash is stored)
   if (action === "connectorKey") {
@@ -390,7 +422,8 @@ export default async function handler(req, res) {
         }
       }
       const result = await db.save(records, existing);
-      if (records.some(r => ["member", "permtemplate", "cert", "logsetting", "dailylog", "changeorder", "task", "jobstatus"].includes(r.type))) auth.clearCache();
+      await push.onSaved(ctx, records, existing).catch(e => console.error("push", e.message));   // tell people about things handed to them
+      if (records.some(r => ["member", "permtemplate", "cert", "logsetting", "dailylog", "changeorder", "task", "jobstatus", "tool"].includes(r.type))) auth.clearCache();
       return res.status(200).json({ ok: true, ...result });
     }
 

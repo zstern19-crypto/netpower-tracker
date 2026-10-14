@@ -71,3 +71,9 @@
 - Notifications are cached 60 s per user; saving a changeorder / task clears the cache.
 - Phone layout: the top menu is a second row under the bar (`--topbar-h` = 92px under 720px). The drawing viewer
   handles pinch/pan itself (`touch-action: none`) so the page never zooms.
+- Phone push (Web Push, `web-push`): `lib/push.js` (VAPID keys auto-made in `pushkeys_company`; `psub_<hash>` = one device,
+  ProjectID = user id; `npref_<userId>` = categories). `onSaved` is called after saves in `api/pm.js` and `api/mcp.js`.
+  Settings page `public/pm/push-ui.js` (`#/notifications`); worker `public/pm/sw.js`. Morning summary `api/cron.js`,
+  schedule in `vercel.json` `crons` (UTC; Hobby = once a day, fires sometime within that hour). `CRON_SECRET` optional.
+- 🔔 read state: `nread_<userId>` (type `notifread`) maps item key (sha256 of kind|href|text, 16 hex) → read time;
+  `?action=notificationsRead` adds keys. App icons are the yellow "P" from the owner's logo PDF (`?v=2` busts caches).

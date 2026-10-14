@@ -676,13 +676,30 @@
     m.id = "bellMenu";
     m.className = "user-menu bell-menu";
     if (notesP) { m.innerHTML = `<div class="um-head"><strong>Notifications</strong></div><div class="muted" style="padding:10px 14px">Loading…</div>`; document.body.appendChild(m); await notesP; m.remove(); if (!document.body.contains(m) && $("#bellMenu")) return; }
-    m.innerHTML = `<div class="um-head"><strong>Notifications</strong></div>` + (notes.length
-      ? notes.map(x => `<a href="${esc(x.href || "#")}" class="note-${esc(x.level)}">${x.kind === "cert" ? "🪪" : x.kind === "drawings" ? "📐" : x.kind === "tool" ? "🧰" : x.kind === "changeorder" ? "💲" : x.kind === "task" ? "☑" : "📋"} ${esc(x.text)}</a>`).join("")
-      : `<div class="muted" style="padding:10px 14px">You're all caught up.</div>`);
+    const icon = x => x.kind === "cert" ? "🪪" : x.kind === "drawings" ? "📐" : x.kind === "tool" ? "🧰" : x.kind === "changeorder" ? "💲" : x.kind === "task" ? "☑" : "📋";
+    const paint = () => {
+      m.innerHTML = `<div class="um-head bell-head"><strong>Notifications</strong>${notes.length ? `<button type="button" class="linkish" id="bellAll">Mark all read</button>` : ""}</div>` + (notes.length
+        ? notes.map(x => `<a href="${esc(x.href || "#")}" class="note-${esc(x.level)}" data-note="${esc(x.key || "")}">${icon(x)} ${esc(x.text)}</a>`).join("")
+        : `<div class="muted" style="padding:10px 14px">You're all caught up.</div>`);
+    };
+    paint();
     document.body.appendChild(m);
-    const close = ev => { if (!ev.target.closest("#bellMenu")) { m.remove(); document.removeEventListener("click", close); } };
+    const close = ev => { if (!document.body.contains(m) || !ev.target.closest("#bellMenu")) { m.remove(); document.removeEventListener("click", close); } };
     setTimeout(() => document.addEventListener("click", close), 0);
-    m.onclick = ev => { if (ev.target.closest("a")) m.remove(); };
+    m.onclick = ev => {
+      if (ev.target.closest("#bellAll")) { ev.stopPropagation(); markRead(notes.map(x => x.key)); paint(); return; }
+      const a = ev.target.closest("a[data-note]");
+      if (a) { markRead([a.dataset.note]); m.remove(); }
+    };
+  }
+  // Read = gone from the list (saved on the server, so it's gone on the phone and the computer)
+  function markRead(keys) {
+    keys = keys.filter(Boolean);
+    if (!keys.length) return;
+    notes = notes.filter(x => !keys.includes(x.key));
+    paintBell();
+    PM.api("/api/pm?action=notificationsRead", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ keys }) })
+      .then(() => { notesAt = Date.now(); }, e => toast(e.message, true));
   }
 
   // ───────────────────────── Daily log reminders ─────────────────────────

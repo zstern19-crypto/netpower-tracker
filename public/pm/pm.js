@@ -511,6 +511,9 @@
       } else if (parts[0] === "manpower" && PM.people) {
         current.nav = "manpower";
         view = () => PM.people.page(parts[1], query);
+      } else if (parts[0] === "notifications" && PM.push) {
+        current.nav = "";
+        view = () => PM.push.page();
       } else if (parts[0] === "tasks" && PM.tasks) {
         current.nav = "tasks";
         view = () => PM.tasks.myTasks();

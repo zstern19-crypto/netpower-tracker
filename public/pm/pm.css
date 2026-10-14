@@ -629,3 +629,13 @@ details.fold[open] > summary { margin-bottom: 10px; }
   .dv { height: calc(100dvh - var(--topbar-h, 52px) - env(safe-area-inset-top)); }
   main { padding-bottom: calc(60px + env(safe-area-inset-bottom)); }
 }
+
+/* Notification settings */
+.np-cat { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+.np-cat input { width: 20px; height: 20px; margin-top: 2px; flex: none; }
+.np-cat > span { display: flex; flex-direction: column; } .np-cat .muted { font-size: 13px; }
+.np-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+ol.steps li { margin-bottom: 6px; }
+.bell-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.bell-head .linkish { background: none; border: 0; padding: 0; width: auto; color: var(--accent); font-size: 13px; font-weight: 600; cursor: pointer; }
+.bell-head .linkish:hover { text-decoration: underline; background: none; }

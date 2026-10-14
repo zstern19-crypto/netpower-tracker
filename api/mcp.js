@@ -8,6 +8,7 @@
 import * as db from "../lib/db.js";
 import * as auth from "../lib/auth.js";
 import { checkRead, checkWrite, canSeePrivate } from "./pm.js";
+import * as push from "../lib/push.js";
 
 const VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const uid = p => p + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -75,6 +76,7 @@ async function save(ctx, rec, stored) {
   await checkWrite(ctx, rec, stored || null);
   const existing = await db.getMany([rec.id]);
   await db.save([rec], existing);
+  await push.onSaved(ctx, [rec], existing).catch(e => console.error("push", e.message));
 }
 async function recordsOf(ctx, type, p) {
   await checkRead(ctx, type, p.id);
