@@ -342,7 +342,7 @@ export default async function handler(req, res) {
       if (project) ensure(ID_RE.test(project), "Bad project id");
       await checkRead(ctx, type, project);
       let records = await db.find(db.and([db.eq("Type", type), ...(project ? [db.eq("ProjectID", project)] : [])]));
-      if (type === "project" && !ctx.isAdmin) records = records.filter(r => ctx.isMember(r.id));
+      if (type === "project" && !ctx.isAdmin) records = records.filter(r => ctx.isMember(r.id)).map(r => { const { value, ...data } = r.data; return { ...r, data }; });  // contract value: company admins only
       // Drawing uploads waiting for review are only visible to drawing admins
       if (type === "drawset") records = records.filter(r => r.data.status !== "pending" || ctx.can(r.projectId, "drawings", "admin"));
       if (type === "cert" && !ctx.isAdmin) records = records.filter(r => r.data.userId === ctx.user.id);
@@ -369,6 +369,8 @@ export default async function handler(req, res) {
         const stored = existing[r.id] ? existing[r.id].rec : null;
         ensure(!stored || stored.type === r.type, "Record type cannot change");
         await checkWrite(ctx, r, stored);
+        // Contract value is hidden from everyone but company admins, so keep the stored one when they save a project
+        if (r.type === "project" && !ctx.isAdmin && stored) { if (stored.data.value !== undefined) r.data.value = stored.data.value; else delete r.data.value; }
         if (!stored && TYPE_TOOL[r.type]) {
           r.data.createdById = r.data.createdById || ctx.contactId;
           r.data.createdByUserId = ctx.user.id;

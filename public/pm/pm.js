@@ -160,7 +160,6 @@
   const SUB_RESPONSES = ["Pending", "Approved", "Approved as Noted", "Revise and Resubmit", "Rejected", "For Record Only"];
   const PUNCH_STATUSES = ["Open", "Ready for Review", "Work Not Accepted", "Closed"];
   const PRIORITIES = ["Low", "Medium", "High"];
-  const WEATHER = ["Clear", "Partly Cloudy", "Overcast", "Rain", "Heavy Rain", "Snow", "Fog", "Windy", "Extreme Heat", "Extreme Cold"];
   const TRADES = ["Electrical", "Low Voltage", "Fire Alarm", "Mechanical", "Plumbing", "Fire Protection", "Concrete", "Framing", "Drywall", "Painting", "Roofing", "Sitework", "General", "Other"];
 
   // ───────────────────────── Current user ─────────────────────────
@@ -411,7 +410,7 @@
         <div class="grp">Admin</div>
         <a href="#/admin/users" class="${location.hash.startsWith("#/admin/users") ? "on" : ""}">Users</a>
         <a href="#/admin/templates" class="${location.hash.startsWith("#/admin/templates") ? "on" : ""}">Permission Templates</a>
-        <a href="#/admin/company" class="${location.hash.startsWith("#/admin/company") ? "on" : ""}">Company Letterhead</a>` : "";
+` : "";
       sb.innerHTML = `
         <div class="grp">Company</div>
         <a href="#/" class="${current.nav === "portfolio" ? "on" : ""}">Portfolio</a>
@@ -601,12 +600,13 @@
 
   function editProject(p) {
     const isNew = !p;
+    const fields = isCompanyAdmin() ? PROJECT_FIELDS : PROJECT_FIELDS.filter(f => f.k !== "value");  // contract value: company admins only
     openModal({
       title: isNew ? "New Project" : "Edit Project",
-      body: formHTML(PROJECT_FIELDS, p ? p.data : { status: "Active" }),
+      body: formHTML(fields, p ? p.data : { status: "Active" }),
       saveLabel: isNew ? "Create Project" : "Save",
       onSave: async root => {
-        const vals = readForm(root, PROJECT_FIELDS);
+        const vals = readForm(root, fields);
         const rec = p ? { ...p, data: { ...p.data, ...vals } } : { id: uid("prj"), type: "project", projectId: "", data: { ...vals, team: [], createdAt: new Date().toISOString(), createdBy: meName() } };
         // Make PM and superintendent part of the team automatically
         rec.data.team = rec.data.team || [];
@@ -636,7 +636,7 @@
         <td>${pill(p.data.status)}</td>
         <td class="nowrap">${esc(contactName(p.data.pmId))}</td>
         <td class="nowrap">${fmtDate(p.data.start)}${p.data.end ? " – " + fmtDate(p.data.end) : ""}</td>
-        <td class="nowrap">${money(p.data.value)}</td></tr>`).join("");
+        ${isCompanyAdmin() ? `<td class="nowrap">${money(p.data.value)}</td>` : ""}</tr>`).join("");
     };
     const all = Store.all("project");
     const by = s => all.filter(p => p.data.status === s).length;
@@ -645,15 +645,15 @@
       <div class="page-head"><h1>Portfolio</h1><span class="sub">${all.length} project${all.length === 1 ? "" : "s"}</span>
         <div class="actions"><button class="btn primary" data-perm="company:admin" data-act="newProject">+ Create Project</button></div></div>
       ${PM.jobs ? `<div class="tabs"><a href="#/" class="on">Projects</a><a href="#/jobs">Job Tracker</a></div>` : ""}
-      <div class="cards">
+      ${isCompanyAdmin() ? `<div class="cards">
         <div class="card"><div class="num">${by("Active")}</div><div class="lbl">Active projects</div></div>
         <div class="card"><div class="num">${by("Bidding")}</div><div class="lbl">Bidding</div></div>
         <div class="card"><div class="num">${by("On Hold")}</div><div class="lbl">On hold</div></div>
         <div class="card"><div class="num">${money(totalValue) || "$0"}</div><div class="lbl">Active contract value</div></div>
-      </div>
+      </div>` : ""}
       <div class="panel flush">
         ${toolbarHTML(key, PROJECT_STATUSES).replace(/<label class="inline-check">.*?<\/label>/s, "")}
-        <div class="table-wrap"><table class="list"><thead><tr><th>Number</th><th>Name</th><th>Location</th><th>Status</th><th>PM</th><th>Schedule</th><th>Value</th></tr></thead>
+        <div class="table-wrap"><table class="list"><thead><tr><th>Number</th><th>Name</th><th>Location</th><th>Status</th><th>PM</th><th>Schedule</th>${isCompanyAdmin() ? "<th>Value</th>" : ""}</tr></thead>
         <tbody id="listBody">${LIST_RENDERERS[key]()}</tbody></table></div>
       </div>`;
   }
@@ -867,9 +867,9 @@
               : mine.length ? `<table class="list"><tbody>${mine.map(m => `<tr class="click" data-href="${m.href}"><td class="nowrap"><a href="${m.href}">${esc(m.t)}</a></td><td>${esc(m.s)}</td><td class="nowrap ${isOverdue(m.due, true) ? "overdue" : ""}">${fmtDate(m.due)}</td></tr>`).join("")}</tbody></table>`
               : `<p class="muted">Nothing waiting on you. 🎉</p>`}
           </div>
-          <div class="panel"><h2>Recent Activity</h2>
+          <details class="panel fold"><summary><h2>Recent Activity</h2><span class="muted">${activity.length ? Math.min(20, activity.length) + " latest" : "none yet"}</span></summary>
             ${activity.length ? `<ul class="history">${activity.slice(0, 20).map(a => `<li><a href="${a.href}">${esc(a.label)}${a.name ? " " + esc(a.name) : ""}</a> — ${esc(a.text)} <span class="muted">· ${esc(a.by)} · ${fmtDateTime(a.at)}</span></li>`).join("")}</ul>` : `<p class="muted">No activity yet.</p>`}
-          </div>
+          </details>
         </div>
         <div>
           ${PM.people ? PM.people.crewPanel(p, today(), { title: "Crew on site today" }) : ""}
@@ -882,7 +882,7 @@
               <div><div class="k">Project Manager</div><div class="v">${esc(contactName(d.pmId)) || "—"}</div></div>
               <div><div class="k">Superintendent</div><div class="v">${esc(contactName(d.superId)) || "—"}</div></div>
               <div><div class="k">Schedule</div><div class="v">${d.start ? fmtDate(d.start) : "—"} → ${d.end ? fmtDate(d.end) : "—"}</div></div>
-              <div><div class="k">Contract Value</div><div class="v">${money(d.value) || "—"}</div></div>
+              ${isCompanyAdmin() ? `<div><div class="k">Contract Value</div><div class="v">${money(d.value) || "—"}</div></div>` : ""}
               ${d.description ? `<div><div class="k">Description</div><div class="v prose">${esc(d.description)}</div></div>` : ""}
             </div>
           </div>
@@ -1208,11 +1208,9 @@
 
   // ───────────────────────── Daily log ─────────────────────────
   const LOG_SECTIONS = [
-    { k: "manpower", title: "Manpower", cols: [{ k: "companyId", label: "Company", type: "company" }, { k: "workers", label: "Workers", type: "number", w: 90 }, { k: "hours", label: "Hours each", type: "number", w: 90 }, { k: "location", label: "Location" }, { k: "notes", label: "Comments" }] },
+    { k: "manpower", title: "Manpower", cols: [{ k: "workers", label: "Workers", type: "number", w: 90 }, { k: "hours", label: "Hours each", type: "number", w: 90 }, { k: "location", label: "Location" }, { k: "notes", label: "Comments" }] },
     { k: "work", title: "Work Performed", cols: [{ k: "area", label: "Area / Location" }, { k: "description", label: "Description of work" }, { k: "percent", label: "% Complete", type: "number", w: 100 }] },
-    { k: "equipment", title: "Equipment", cols: [{ k: "name", label: "Equipment" }, { k: "hours", label: "Hours", type: "number", w: 90 }, { k: "idle", label: "Idle?", type: "select", options: ["", "No", "Yes"], w: 90 }, { k: "notes", label: "Comments" }] },
     { k: "deliveries", title: "Deliveries", cols: [{ k: "from", label: "Delivery From" }, { k: "tracking", label: "Tracking / PO #" }, { k: "contents", label: "Contents" }, { k: "time", label: "Time", w: 100 }] },
-    { k: "visitors", title: "Visitors & Inspections", cols: [{ k: "name", label: "Visitor / Inspector" }, { k: "type", label: "Purpose", type: "select", options: ["", "Inspection", "Owner Visit", "Architect/Engineer", "Utility", "Vendor", "Other"] }, { k: "result", label: "Result", type: "select", options: ["", "Passed", "Failed", "Partial", "N/A"], w: 110 }, { k: "notes", label: "Comments" }] },
     { k: "safety", title: "Safety & Incidents", cols: [{ k: "type", label: "Type", type: "select", options: ["", "Toolbox Talk", "Observation", "Near Miss", "Incident", "Injury", "Property Damage"] }, { k: "description", label: "Description" }, { k: "action", label: "Corrective Action" }] },
     { k: "delays", title: "Delays", cols: [{ k: "type", label: "Type", type: "select", options: ["", "Weather", "Material", "Labor", "Inspection", "Owner", "Design", "Other"] }, { k: "hours", label: "Hours lost", type: "number", w: 100 }, { k: "description", label: "Description" }] }
   ];
@@ -1234,7 +1232,6 @@
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) date = today();
     const rec = Store.get(logId(p, date));
     const d = rec ? rec.data : {};
-    const w = d.weather || {};
     const logs = Store.all("dailylog", p.id).sort((a, b) => b.data.date.localeCompare(a.data.date));
     const totalWorkers = (d.manpower || []).reduce((s, m) => s + (Number(m.workers) || 0), 0);
     const totalHours = (d.manpower || []).reduce((s, m) => s + (Number(m.workers) || 0) * (Number(m.hours) || 0), 0);
@@ -1256,15 +1253,6 @@
             ${rec ? `<span class="muted">Last saved ${fmtDateTime(d.updatedAt)}${d.updatedBy ? " by " + esc(d.updatedBy) : ""}</span>` : `<span class="muted">Not started</span>`}</div>
             ${d.locked ? `<p>${pill("Approved")} This log was approved by ${esc(d.lockedBy || "")} on ${fmtDateTime(d.lockedAt)}. Unlock to edit.</p>` : ""}
           </div>
-          <div class="panel"><h2>Weather</h2>
-            <div class="form-grid">
-              <div class="field"><label>Conditions</label><select data-w="conditions"><option></option>${WEATHER.map(x => `<option ${w.conditions === x ? "selected" : ""}>${x}</option>`).join("")}</select></div>
-              <div class="field"><label>Ground</label><select data-w="ground"><option></option>${["Dry", "Wet", "Muddy", "Frozen", "Snow-covered"].map(x => `<option ${w.ground === x ? "selected" : ""}>${x}</option>`).join("")}</select></div>
-              <div class="field"><label>High (°F)</label><input type="number" data-w="high" value="${esc(w.high)}"></div>
-              <div class="field"><label>Low (°F)</label><input type="number" data-w="low" value="${esc(w.low)}"></div>
-              <div class="field"><label>Precipitation (in)</label><input type="number" step="any" data-w="precip" value="${esc(w.precip)}"></div>
-              <div class="field"><label class="inline-check" style="margin-top:22px"><input type="checkbox" data-w="delay" ${w.delay ? "checked" : ""}> Weather delay</label></div>
-            </div></div>
           ${LOG_SECTIONS.map(sec => `<div class="panel" data-sec="${sec.k}">
             <div class="section-head"><h2 style="margin:0">${sec.title}</h2>
               <span>${sec.k === "manpower" ? `<span class="muted" style="margin-right:8px">${totalWorkers} workers · ${totalHours} man-hours</span><button class="btn small" data-copyprev>Copy from previous log</button> ` : ""}<button class="btn small" data-addrow="${sec.k}">+ Add row</button></span></div>
@@ -1292,18 +1280,14 @@
   function fillCrew(p, list) {
     const form = $("#logForm");
     if (!form || $("#saveLog").disabled) return;
-    const byCo = {};
-    list.forEach(x => { const c = Store.get(x.person.contactId); const co = (c && c.data.companyId) || ""; (byCo[co] = byCo[co] || []).push(x.person.name); });
     const sec = LOG_SECTIONS[0];
-    Object.entries(byCo).forEach(([co, names]) => $(`[data-sec="manpower"] tbody`, form).insertAdjacentHTML("beforeend", subRowHTML(sec, { companyId: co, workers: names.length, hours: 8, notes: names.join(", ") })));
+    $(`[data-sec="manpower"] tbody`, form).insertAdjacentHTML("beforeend", subRowHTML(sec, { workers: list.length, hours: 8, notes: list.map(x => x.person.name).join(", ") }));
     toast(`Added ${list.length} crew member${list.length > 1 ? "s" : ""} — review hours and save`);
   }
 
   function collectLog() {
     const form = $("#logForm");
-    const weather = {};
-    $$("[data-w]", form).forEach(el => { weather[el.dataset.w] = el.type === "checkbox" ? el.checked : el.value; });
-    const out = { weather, notes: $("#logNotes").value.trim() };
+    const out = { notes: $("#logNotes").value.trim() };  // (weather, equipment and visitors sections were removed; old entries stay stored)
     LOG_SECTIONS.forEach(sec => {
       out[sec.k] = $$(`[data-sec="${sec.k}"] tbody tr`, form).map(tr => {
         const row = {};
@@ -1355,15 +1339,14 @@
 
   ACTIONS.exportLogs = el => {
     const p = Store.get(el.dataset.project);
-    const rows = [["Date", "Conditions", "High", "Low", "Precip", "Weather Delay", "Total Workers", "Man-hours", "Manpower Detail", "Work Performed", "Deliveries", "Visitors/Inspections", "Safety", "Delays", "Notes", "Approved"]];
+    const rows = [["Date", "Total Workers", "Man-hours", "Manpower Detail", "Work Performed", "Deliveries", "Safety", "Delays", "Notes", "Approved"]];
     Store.all("dailylog", p.id).sort((a, b) => a.data.date.localeCompare(b.data.date)).forEach(l => {
-      const d = l.data, w = d.weather || {};
+      const d = l.data;
       const mp = d.manpower || [];
-      rows.push([d.date, w.conditions, w.high, w.low, w.precip, w.delay ? "Yes" : "", mp.reduce((s, m) => s + (Number(m.workers) || 0), 0), mp.reduce((s, m) => s + (Number(m.workers) || 0) * (Number(m.hours) || 0), 0),
-        mp.map(m => `${companyName(m.companyId) || "?"}: ${m.workers || 0}`).join("; "),
+      rows.push([d.date, mp.reduce((s, m) => s + (Number(m.workers) || 0), 0), mp.reduce((s, m) => s + (Number(m.workers) || 0) * (Number(m.hours) || 0), 0),
+        mp.map(m => [m.workers || 0, m.location, m.notes].filter(Boolean).join(" – ")).join("; "),
         (d.work || []).map(x => [x.area, x.description].filter(Boolean).join(" – ")).join("; "),
         (d.deliveries || []).map(x => [x.from, x.contents].filter(Boolean).join(" – ")).join("; "),
-        (d.visitors || []).map(x => [x.name, x.type, x.result].filter(Boolean).join(" – ")).join("; "),
         (d.safety || []).map(x => [x.type, x.description].filter(Boolean).join(" – ")).join("; "),
         (d.delays || []).map(x => [x.type, x.hours && x.hours + "h", x.description].filter(Boolean).join(" – ")).join("; "),
         d.notes, d.locked ? "Yes" : ""]);

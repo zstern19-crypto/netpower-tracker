@@ -95,15 +95,9 @@
           <div class="field"><label for="inTitle">Description</label><input id="inTitle" value="${esc(d.title || "")}" placeholder="e.g. 2nd floor rough-in, units 2A–2F"></div>
           <div class="field"><label for="inDate">Date</label><input id="inDate" type="date" value="${esc(d.date || "")}"></div>
           <div class="field"><label for="inTime">Time <span class="muted">(leave empty if not confirmed)</span></label><input id="inTime" type="time" value="${esc(d.time || "")}"></div>
-          <div class="field"><label for="inHours">Length (hours)</label><input id="inHours" type="number" min="0.5" step="0.5" value="${esc(d.hours || 1)}"></div>
           <div class="field"><label for="inStatus">Status</label><select id="inStatus">${STATUSES.map(t => `<option ${d.status === t ? "selected" : ""}>${t}</option>`).join("")}</select></div>
-          <div class="field"><label for="inArea">Area / floor</label><input id="inArea" value="${esc(d.area || "")}"></div>
-          <div class="field"><label for="inInspector">Inspector</label><input id="inInspector" value="${esc(d.inspector || "")}"></div>
-          <div class="field"><label for="inAgency">Agency</label><input id="inAgency" value="${esc(d.agency || "")}" placeholder="e.g. NYC DOB Electrical, Fire Dept, 3rd-party"></div>
-          <div class="field"><label for="inPhone">Inspector phone</label><input id="inPhone" value="${esc(d.phone || "")}"></div>
           <div class="field full"><label>Who from our side is attending</label><div class="checks">${contacts.map(c => `<label><input type="checkbox" name="inAtt" value="${c.id}" ${(d.attendees || []).includes(c.id) ? "checked" : ""}> ${esc(c.data.name)}</label>`).join("") || `<span class="muted">Add people in the Directory first.</span>`}</div></div>
           <div class="field full"><label for="inNotes">Notes</label><textarea id="inNotes">${esc(d.notes || "")}</textarea></div>
-          <div class="field full"><label for="inResult">Result / inspector comments</label><textarea id="inResult" placeholder="Filled in after the inspection">${esc(d.result || "")}</textarea></div>
           <div class="field full"><label>Files (permit, sign-off sheet, photos)</label><div id="inFiles"></div><input type="file" id="inUpload" multiple></div>
         </div>`,
       onOpen: root => {
@@ -123,11 +117,11 @@
         if (!v("inDate")) { toast("Pick a date", true); return false; }
         if ($("#inFiles", root).textContent.includes("Uploading")) { toast("Wait for the files to finish uploading", true); return false; }
         const data = { ...(rec ? rec.data : { createdBy: PM.meName(), createdAt: new Date().toISOString() }),
-          type: v("inType"), title: v("inTitle"), date: v("inDate"), time: v("inTime"), hours: Number(v("inHours")) || 1, status: v("inStatus"), area: v("inArea"),
-          inspector: v("inInspector"), agency: v("inAgency"), phone: v("inPhone"), notes: v("inNotes"), result: v("inResult"),
+          type: v("inType"), title: v("inTitle"), date: v("inDate"), time: v("inTime"), status: v("inStatus"),
+          notes: v("inNotes"),
           attendees: $$("input[name=inAtt]:checked", root).map(i => i.value), attachments: files };
         // Calendar programs only update an existing event when its sequence number goes up
-        if (rec && ["date", "time", "hours", "status", "area", "type", "title"].some(k => String(rec.data[k] || "") !== String(data[k] || ""))) data.seq = (rec.data.seq || 0) + 1;
+        if (rec && ["date", "time", "status", "type", "title"].some(k => String(rec.data[k] || "") !== String(data[k] || ""))) data.seq = (rec.data.seq || 0) + 1;
         const removed = rec ? (rec.data.attachments || []).filter(f => !files.some(x => x.url === f.url)).map(f => f.url) : [];
         const next = PM.withHistory({ id: rec ? rec.id : PM.uid("insp"), type: "inspection", projectId: p.id, data },
           rec ? (rec.data.status !== data.status ? `Status changed to ${data.status}` : "Edited") : "Scheduled");
@@ -181,15 +175,13 @@
     return `<div class="page-head"><h1>Inspections</h1><span class="sub">${counts.upcoming} scheduled</span>
         <div class="actions">${canEdit ? `<button class="btn primary" id="inAdd">+ Schedule Inspection</button>` : ""}</div></div>
       <div class="tabs">${[["upcoming", "Scheduled"], ["past", "Results"], ["all", "All"]].map(([k, l]) => `<a href="#" data-inview="${k}" class="${view === k ? "on" : ""}">${l}</a>`).join("")}</div>
-      <div class="panel flush">${list.length ? `<div class="table-wrap"><table class="list insp-list"><thead><tr><th>Date</th><th>Time</th><th>Type</th><th>Area</th><th>Inspector</th><th>Attending</th><th>Status</th><th></th></tr></thead><tbody>
+      <div class="panel flush">${list.length ? `<div class="table-wrap"><table class="list insp-list"><thead><tr><th>Date</th><th>Time</th><th>Type</th><th>Attending</th><th>Status</th><th></th></tr></thead><tbody>
         ${list.map(r => { const d = r.data; const late = d.status === "Scheduled" && d.date < PM.today(); return `<tr>
           <td class="nowrap ${late ? "overdue" : ""}"><strong>${esc(PM.fmtDate(d.date))}</strong>${d.date === PM.today() ? ` <span class="pill open">Today</span>` : ""}</td>
           <td class="nowrap">${esc(fmtTime(d.time)) || `<span class="muted">TBD</span>`}</td>
           <td>${esc(d.type)}${d.title ? `<div class="muted">${esc(d.title)}</div>` : ""}</td>
-          <td>${esc(d.area || "")}</td>
-          <td>${esc([d.inspector, d.agency].filter(Boolean).join(" · "))}${d.phone ? `<div class="muted"><a href="tel:${esc(d.phone)}">${esc(d.phone)}</a></div>` : ""}</td>
           <td>${esc((d.attendees || []).map(PM.contactName).filter(Boolean).join(", "))}</td>
-          <td><span class="pill ${PILL[d.status] || ""}">${esc(d.status)}</span>${d.result ? `<div class="muted" style="max-width:260px">${esc(d.result)}</div>` : ""}${(d.attachments || []).length ? `<div>${d.attachments.map(f => `<a href="#" data-dl="${esc(f.url)}" data-name="${esc(f.name)}" title="${esc(f.name)}">📎</a>`).join(" ")}</div>` : ""}</td>
+          <td><span class="pill ${PILL[d.status] || ""}">${esc(d.status)}</span>${(d.attachments || []).length ? `<div>${d.attachments.map(f => `<a href="#" data-dl="${esc(f.url)}" data-name="${esc(f.name)}" title="${esc(f.name)}">📎</a>`).join(" ")}</div>` : ""}</td>
           <td class="nowrap">
             ${d.status === "Scheduled" ? `<button class="btn small" data-in="ics" data-id="${r.id}" title="Download a calendar file for Outlook">📅 Calendar</button> <button class="btn small" data-in="mail" data-id="${r.id}" title="Email an invite with the calendar file attached">✉ Invite</button>` : ""}
             ${["Failed", "Partial"].includes(d.status) && canEdit ? `<button class="btn small" data-in="reinspect" data-id="${r.id}">Schedule re-inspection</button>` : ""}
