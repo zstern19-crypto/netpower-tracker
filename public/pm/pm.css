@@ -617,3 +617,15 @@ details.fold[open] > summary { margin-bottom: 10px; }
 .mp-sel { width: 18px; height: 18px; flex: none; }
 .ai-filled { background: #fff8e6 !important; border-color: #f2c14e !important; }
 .jt-bic { position: absolute; bottom: 2px; right: 3px; font-size: 10px; font-weight: 700; background: #1d63c9; color: #fff; border-radius: 8px; padding: 0 4px; line-height: 14px; }
+.mp-add.mp-rm { color: #a12020; margin-bottom: 3px; }
+.mc-pick { width: 18px; height: 18px; flex: none; }
+
+/* Installed app (Add to Home Screen): keep the top bar clear of the phone's notch / status bar */
+@media (display-mode: standalone) {
+  .topbar { padding-top: env(safe-area-inset-top); height: calc(52px + env(safe-area-inset-top)); }
+  .topbar > .topnav { top: calc(52px + env(safe-area-inset-top)); }
+  .layout { min-height: calc(100vh - var(--topbar-h, 52px) - env(safe-area-inset-top)); }
+  .sidebar { top: calc(var(--topbar-h, 52px) + env(safe-area-inset-top)) !important; }
+  .dv { height: calc(100dvh - var(--topbar-h, 52px) - env(safe-area-inset-top)); }
+  main { padding-bottom: calc(60px + env(safe-area-inset-bottom)); }
+}

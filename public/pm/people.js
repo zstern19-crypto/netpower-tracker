@@ -149,6 +149,7 @@
             ${days.map(day => { const here = deps.filter(d => d.projectId === p.id && overlaps(d, day, day));
               return `<td class="mp-cell ${day === todayS ? "today" : ""} ${[0, 6].includes(parse(day).getDay()) ? "wkend" : ""}" ${edit ? `data-drop="${p.id}" data-day="${day}"` : ""}>
                 ${here.map(d => { const u = personById(people, d.data.userId); return `<div class="mp-chip ${conflict(u.id, day) ? "conflict" : ""}" ${edit ? `draggable="true" data-dep="${d.id}"` : ""} data-open="${d.id}" data-day="${day}" title="${esc(u.name)}: ${PM.fmtDate(d.data.start)} – ${PM.fmtDate(d.data.end)}${conflict(u.id, day) ? " — double-booked!" : ""}${d.data.note ? " — " + esc(d.data.note) : ""}">${avatar(u, 22)}<span>${esc(u.name.split(" ")[0])}</span>${edit ? `<button type="button" class="mp-x" data-rmday="${d.id}" data-day="${day}" title="Remove ${esc(u.name)} for ${dayLabel(day)} only" aria-label="Remove ${esc(u.name)} for ${dayLabel(day)}">✕</button>` : ""}</div>`; }).join("")}
+                ${edit && here.length > 1 ? `<button class="mp-add mp-rm" data-rmmany="${p.id}" data-day="${day}" title="Remove several people from this day" aria-label="Remove several people">−</button>` : ""}
                 ${edit ? `<button class="mp-add" data-add="${p.id}" data-day="${day}" title="Deploy someone here" aria-label="Deploy someone to ${esc(p.data.name)} on ${dayLabel(day)}">+</button>` : ""}</td>`; }).join("")}</tr>`; }).join("")
             || `<tr><td colspan="8" class="empty">No active projects you can staff.</td></tr>`}</tbody>
           <tfoot><tr><th class="mp-proj">Deployed</th>${days.map(day => `<td class="mp-total">${new Set(deps.filter(d => overlaps(d, day, day)).map(d => d.data.userId)).size}</td>`).join("")}</tr></tfoot></table></div>
@@ -190,6 +191,7 @@
       });
     });
     $$("[data-add]").forEach(b => b.onclick = () => assignModal(people, selected(), b.dataset.add, b.dataset.day));
+    $$("[data-rmmany]").forEach(b => b.onclick = () => removeManyModal(people, b.dataset.rmmany, b.dataset.day));
     const syncSel = () => {
       const n = selected().length;
       $("#mpSelN").textContent = n ? `${n} selected — drag one of them onto a job/day, or:` : "Tick people to deploy several at once";
@@ -274,9 +276,10 @@
       return `<tr class="mc-expand"><td colspan="${cols.length + 1}"><div class="mc-x">
         <div class="mc-x-head"><strong>${esc(p.data.name)} · ${esc(parse(day).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" }))}</strong>
           <span class="muted">${here.length} deployed</span><span class="spacer"></span><button class="btn small" data-mc-close>Close</button></div>
-        <div class="mc-guys">${here.map(d => { const u = personById(people, d.data.userId); return `<div class="mc-guy">${avatar(u, 28)}<div><strong>${esc(u.name)}</strong><div class="muted">${esc(u.trade || "")}${d.data.note ? " · " + esc(d.data.note) : ""}</div></div>
+        <div class="mc-guys">${here.map(d => { const u = personById(people, d.data.userId); return `<div class="mc-guy">${edit ? `<input type="checkbox" class="mc-pick" value="${d.id}" aria-label="Select ${esc(u.name)}">` : ""}${avatar(u, 28)}<div><strong>${esc(u.name)}</strong><div class="muted">${esc(u.trade || "")}${d.data.note ? " · " + esc(d.data.note) : ""}</div></div>
           ${edit ? `<button class="btn small" data-mc-rm="${d.id}" data-day="${day}" title="Remove for this day">✕</button>` : ""}</div>`; }).join("") || `<p class="muted" style="margin:0">Nobody deployed here this day.</p>`}</div>
-        ${edit ? `<div class="mc-x-foot"><button class="btn small primary" data-mc-add="${p.id}" data-day="${day}">+ Add a guy</button>
+        ${edit ? `<div class="mc-x-foot"><button class="btn small primary" data-mc-add="${p.id}" data-day="${day}">+ Add guys</button>
+          ${here.length ? `<button class="btn small danger" id="mcRmSel" data-day="${day}" disabled>Remove selected</button>` : ""}
           <label>Count for the chart <input class="mc-in" type="number" min="0" max="999" data-plan="${p.id}|days|${day}" value="${pl.days[day] != null ? pl.days[day] : ""}" placeholder="${here.length}" style="width:70px"></label>
           <span class="muted" style="font-size:12px">Leave empty to use the number deployed. Type a number when the guys aren't in the app yet.</span></div>` : ""}
       </div></td></tr>`;
@@ -308,6 +311,16 @@
     $$("[data-mc-close]").forEach(b => b.onclick = () => { chartOpen = ""; PM.render(); });
     $$("[data-mc-add]").forEach(b => b.onclick = () => assignModal(people, "", b.dataset.mcAdd, b.dataset.day));
     $$("[data-mc-rm]").forEach(b => b.onclick = () => removeDays(Store.get(b.dataset.mcRm), b.dataset.day, b.dataset.day, people));
+    const rmSel = $("#mcRmSel");
+    if (rmSel) {
+      const picks = () => $$(".mc-pick:checked").map(c => c.value);
+      $$(".mc-pick").forEach(c => c.onchange = () => { const n = picks().length; rmSel.disabled = !n; rmSel.textContent = n ? `Remove ${n} for this day` : "Remove selected"; });
+      rmSel.onclick = async () => {
+        const ids = picks(); rmSel.disabled = true;
+        let n = 0; for (const id of ids) if (await removeDays(Store.get(id), rmSel.dataset.day, rmSel.dataset.day, people, true)) n++;
+        toast(`${n} removed for ${dayLabel(rmSel.dataset.day)}`); PM.render();
+      };
+    }
     $$("[data-plan]").forEach(inp => inp.onchange = async () => {
       const [pid, part, key] = inp.dataset.plan.split("|");
       inp.disabled = true;
@@ -409,7 +422,7 @@
   }
 
   // Take days out of an assignment (one day, or a range): trims it, splits it in two, or removes it
-  async function removeDays(dep, from, to, people, quiet) {
+  async function removeDays(dep, from, to, people, quiet) {   // quiet = part of a batch (no toast / redraw)
     if (!dep) return false;
     const u = personById(people || [], dep.data.userId);
     if (to < from) [from, to] = [to, from];
@@ -417,16 +430,48 @@
     to = to > dep.data.end ? dep.data.end : to;
     if (from > to) { toast("Those days aren't part of this assignment", true); return false; }
     const label = from === to ? PM.fmtDate(from) : `${PM.fmtDate(from)} – ${PM.fmtDate(to)}`;
-    if (!quiet && !window.confirm(`Remove ${u.name} from ${(Store.get(dep.projectId) || { data: { name: "this project" } }).data.name} for ${label}?`)) return false;
     try {
       if (from <= dep.data.start && to >= dep.data.end) await Store.remove(dep.id);
       else if (from <= dep.data.start) await Store.save({ ...dep, data: { ...dep.data, start: addDays(to, 1) } });
       else if (to >= dep.data.end) await Store.save({ ...dep, data: { ...dep.data, end: addDays(from, -1) } });
       else await Store.saveMany([{ ...dep, data: { ...dep.data, end: addDays(from, -1) } }, { id: uid("dep"), type: "deploy", projectId: dep.projectId, data: { ...dep.data, start: addDays(to, 1) } }]);
     } catch (e) { toast("Not removed: " + e.message, true); return false; }
-    toast(`${u.name} removed for ${label}`);
-    PM.render();
+    if (!quiet) { toast(`${u.name} removed for ${label}`); PM.render(); }
     return true;
+  }
+  // Remove several people from a job at once (this day, through Friday, or their whole assignment)
+  function removeManyModal(people, projectId, day) {
+    const p = Store.get(projectId);
+    const here = Store.all("deploy").filter(d => d.projectId === projectId && overlaps(d, day, day));
+    if (!here.length) return;
+    PM.openModal({
+      title: `Remove from ${p.data.name}`,
+      saveLabel: "Remove selected",
+      body: `<div class="field"><label>Who <span class="muted" id="rmCount"></span></label>
+          <label class="inline-check"><input type="checkbox" id="rmAll"> Everyone (${here.length})</label>
+          <div class="checks dp-people">${here.map(d => `<label><input type="checkbox" name="rmDep" value="${d.id}"> ${esc(personById(people, d.data.userId).name)} <span class="muted">${esc(PM.fmtDate(d.data.start))} – ${esc(PM.fmtDate(d.data.end))}</span></label>`).join("")}</div></div>
+        <div class="field"><label>For</label><div class="radio-list">
+          <label><input type="radio" name="rmWhen" value="day" checked> Just ${esc(dayLabel(day))}</label>
+          <label><input type="radio" name="rmWhen" value="week"> ${esc(dayLabel(day))} through ${esc(dayLabel(weekEnd(day)))}</label>
+          <label><input type="radio" name="rmWhen" value="all"> Their whole assignment here</label></div></div>`,
+      onOpen: root => {
+        const sync = () => { const n = $$("input[name=rmDep]:checked", root).length; $("#rmCount", root).textContent = n ? `(${n} selected)` : ""; };
+        $("#rmAll", root).onchange = e => { $$("input[name=rmDep]", root).forEach(c => { c.checked = e.target.checked; }); sync(); };
+        root.addEventListener("change", sync);
+      },
+      onSave: async root => {
+        const ids = $$("input[name=rmDep]:checked", root).map(c => c.value), when = $("input[name=rmWhen]:checked", root).value;
+        if (!ids.length) { toast("Tick who to remove", true); return false; }
+        let n = 0;
+        for (const id of ids) {
+          const dep = Store.get(id);
+          const [f, t] = when === "all" ? [dep.data.start, dep.data.end] : [day, when === "week" ? weekEnd(day) : day];
+          if (await removeDays(dep, f, t, people, true)) n++;
+        }
+        toast(`${n} removed from ${p.data.name}`);
+        return true;
+      }
+    });
   }
 
   function editDeployment(people, dep, day) {
@@ -454,7 +499,6 @@
         if (rd) rd.onclick = async () => { const f = $("#edRmFrom", root).value, t = $("#edRmTo", root).value; if (!f || !t) return; if (await removeDays(dep, f, t, people)) PM.closeModal(); };
         const rm = $("#edRemove", root);
         if (rm) rm.onclick = async () => {
-          if (!window.confirm(`Remove ${u.name} from this project for ${PM.fmtDate(dep.data.start)} – ${PM.fmtDate(dep.data.end)}?`)) return;
           try { await Store.remove(dep.id); PM.closeModal(); PM.render(); toast("Removed"); } catch (e) { toast("Not removed: " + e.message, true); }
         };
       },

@@ -1,0 +1,17 @@
+{
+  "name": "NetPower PM",
+  "short_name": "NetPower PM",
+  "description": "Project management for NetPower Electric",
+  "id": "/pm/",
+  "start_url": "/pm/",
+  "scope": "/pm/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f3f4f6",
+  "theme_color": "#24292f",
+  "icons": [
+    { "src": "/pm/img/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/pm/img/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/pm/img/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

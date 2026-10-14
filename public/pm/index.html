@@ -2,8 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>NetPower PM</title>
+<link rel="manifest" href="/pm/manifest.webmanifest">
+<meta name="theme-color" content="#24292f">
+<link rel="icon" type="image/png" sizes="192x192" href="/pm/img/icon-192.png">
+<link rel="apple-touch-icon" href="/pm/img/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="NetPower PM">
 <link rel="stylesheet" href="/pm/pm.css">
 </head>
 <body>
@@ -27,6 +35,7 @@
 </div>
 <div id="modalRoot"></div>
 <div id="toast" class="toast" hidden></div>
+<script>if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("/pm/sw.js", { scope: "/pm/" }).catch(() => {});</script>
 <script src="/pm/pm.js"></script>
 <script src="/pm/drawings.js"></script>
 <script src="/pm/forms.js"></script>
