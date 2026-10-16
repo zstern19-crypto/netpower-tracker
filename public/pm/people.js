@@ -667,6 +667,11 @@
     n.textContent = notes.length ? String(notes.length) : "";
     n.hidden = !notes.length;
     $("#bellBtn").classList.toggle("alert", notes.some(x => x.level === "danger"));
+    // The red number on the app's home-screen icon = unread 🔔 items (iPhone 16.4+ home-screen app, Android, desktop apps)
+    try {
+      if (navigator.setAppBadge) (notes.length ? navigator.setAppBadge(notes.length) : navigator.clearAppBadge()).catch(() => {});
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ badge: notes.length });
+    } catch (e) { /* not supported */ }
   }
   async function bellMenu(e) {
     e.stopPropagation();

@@ -88,3 +88,6 @@
   page shows a "Check notifications" list; the app re-sends this phone's subscription once a day (`PM.push.sync`).
   Nobody is notified about their own actions. 🔔 shows every open task assigned to you ("Task for you…") until read;
   `notify.unreadFor` filters read items for the bell and the morning summary.
+- One-shot links: `?new=1` / `?open=<id>` are removed from the address by the router (history.replaceState) after it reads
+  them, and a task opened from `#/p/<pid>/tasks/<id>` switches the address to the list — so redraws don't reopen forms.
+- Home-screen icon number: the app sets it to the unread 🔔 count (`navigator.setAppBadge`); the worker adds 1 per push.

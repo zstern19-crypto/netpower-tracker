@@ -62,7 +62,12 @@
   function wire(open) {
     $$("[data-tk-done]").forEach(c => c.onchange = () => toggleDone(Store.get(c.dataset.tkDone)));
     $$("[data-tk-add]").forEach(b => b.onclick = () => editTask(Store.get(b.dataset.tkAdd), null));
-    if (open) { const r = Store.get(open); if (r && r.type === "task") editTask(Store.get(r.projectId), r); }
+    if (open) {
+      const r = Store.get(open);
+      // Opened from a link (#/p/<pid>/tasks/<id>): the address goes back to the list so saving or closing doesn't reopen it
+      history.replaceState(history.state, "", location.pathname + location.search + `#/p/${r ? r.projectId : ""}/tasks`);
+      if (r && r.type === "task") editTask(Store.get(r.projectId), r);
+    }
   }
 
   function page(p, sub, query) {

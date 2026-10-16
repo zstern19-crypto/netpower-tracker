@@ -476,6 +476,11 @@
     const hash = location.hash.replace(/^#\/?/, "");
     const parts = hash.split("?")[0].split("/").filter(Boolean).map(decodeURIComponent);
     const query = new URLSearchParams(hash.split("?")[1] || "");
+    // "?new=1" / "?open=<id>" open a form once: drop them from the address so the next redraw (e.g. after saving) doesn't open it again
+    if (query.has("new") || query.has("open")) {
+      const rest = new URLSearchParams(query); rest.delete("new"); rest.delete("open");
+      history.replaceState(history.state, "", location.pathname + location.search + "#/" + hash.split("?")[0] + (rest.toString() ? "?" + rest : ""));
+    }
     const main = $("#main");
     current = { project: null, tool: null, nav: null };
     try {

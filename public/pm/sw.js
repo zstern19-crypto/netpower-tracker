@@ -118,13 +118,26 @@ self.addEventListener("message", e => {
   if (e.data === "clear-saved") e.waitUntil(Promise.all([caches.delete(DATA), caches.delete(FILES)]));
 });
 
+// Icon number while the app is closed: one more per notification; the app sets the real count (unread 🔔) when opened
+async function bumpBadge() {
+  if (!self.navigator.setAppBadge) return;
+  const c = await caches.open(SHELL), key = "/pm/__badge";
+  const n = (Number(await (await c.match(key) || new Response("0")).text()) || 0) + 1;
+  await c.put(key, new Response(String(n)));
+  await self.navigator.setAppBadge(n);
+}
+self.addEventListener("message", e => { if (e.data && e.data.badge != null) e.waitUntil(caches.open(SHELL).then(c => c.put("/pm/__badge", new Response(String(e.data.badge))))); });
+
 self.addEventListener("push", e => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch (err) { d = { body: e.data ? e.data.text() : "" }; }
-  e.waitUntil(self.registration.showNotification(d.title || "NetPower PM", {
-    body: d.body || "", tag: d.tag || undefined, data: { url: d.url || "/pm/" },
-    icon: "/pm/img/icon-192.png?v=2", badge: "/pm/img/icon-192.png?v=2"
-  }));
+  e.waitUntil(Promise.all([
+    self.registration.showNotification(d.title || "NetPower PM", {
+      body: d.body || "", tag: d.tag || undefined, data: { url: d.url || "/pm/" },
+      icon: "/pm/img/icon-192.png?v=2", badge: "/pm/img/icon-192.png?v=2"
+    }),
+    bumpBadge().catch(() => {})
+  ]));
 });
 
 // Tapping a notification opens (or focuses) the app on the right page
