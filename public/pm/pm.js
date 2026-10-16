@@ -1708,6 +1708,7 @@
   const boot = () => Store.init().then(async need => {
     if (need) { PM.auth.showLogin(need); return; }
     await render();
+    if (PM.push && PM.push.sync) PM.push.sync();   // keep this phone signed up for notifications
     if (Store.mode === "local" && !me()) pickUser();
   }).catch(e => {
     $("#main").innerHTML = `<div class="panel"><h2>${navigator.onLine === false || /offline/i.test(e.message) ? "You're offline" : "Could not connect to the database"}</h2><p class="muted">${esc(e.message)}</p><button class="btn" onclick="location.reload()">Retry</button></div>`;
