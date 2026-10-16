@@ -24,7 +24,7 @@ export default async function handler(req, res) {
       if (!(await push.prefs(id)).daily) continue;
       const u = await db.get(id);
       if (!u || u.type !== "user" || u.data.active === false) continue;
-      const list = await notify.forUser(await auth.contextFor(u));
+      const list = await notify.unreadFor(await auth.contextFor(u));
       if (!list.length) continue;
       sent += await push.sendToUsers([id], "daily", { title: `Good morning — ${list.length} thing${list.length === 1 ? "" : "s"} need${list.length === 1 ? "s" : ""} attention`,
         body: list.slice(0, 3).map(x => x.text).join(" · ") + (list.length > 3 ? ` · +${list.length - 3} more` : ""), url: "/pm/", tag: "daily" });

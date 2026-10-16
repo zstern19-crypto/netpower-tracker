@@ -83,3 +83,8 @@
   a whole job in one request (`PACK_TYPES` in api/pm.js must match the project page's loads in pm.js); the page uses it.
   `/pm` redirects to `/pm/` so the worker controls the page. Test harness: register the worker in the test (it only
   registers itself on https) and run Chromium without the proxy env vars.
+- Push diagnostics: a failed send (not 404/410) is saved on the `pushsub` record (`lastError`, cleared on the next good
+  send); `?action=pushPrefs&endpoint=` marks `thisDevice`; `?action=pushTeam` (admins) lists who has phones on. Settings
+  page shows a "Check notifications" list; the app re-sends this phone's subscription once a day (`PM.push.sync`).
+  Nobody is notified about their own actions. 🔔 shows every open task assigned to you ("Task for you…") until read;
+  `notify.unreadFor` filters read items for the bell and the morning summary.

@@ -13,7 +13,6 @@
 //   POST   /api/pm  { records: [{ id, type, projectId, data }] }   (upsert by id)
 //   DELETE /api/pm?id=abc[&children=1]
 
-import crypto from "node:crypto";
 import * as db from "../lib/db.js";
 import * as auth from "../lib/auth.js";
 import * as notify from "../lib/notify.js";
@@ -24,8 +23,6 @@ const { TYPE_TOOL, ensure, httpError } = auth;
 const TYPES = ["project", "company", "contact", "lookup", "member", "permtemplate", "cert", "tool", "setting", ...Object.keys(TYPE_TOOL)];
 // Tool tracker: everyone may check tools out/in (these fields); only company admins edit the inventory
 const TOOL_MOVE_FIELDS = ["checkout", "history", "condition", "conditionNote", "updatedAt"];
-// A notification's identity: if its wording changes (another missed day, a new due date) it shows again as new
-const noteKey = x => crypto.createHash("sha256").update([x.kind, x.href, x.text].join("|")).digest("hex").slice(0, 16);
 const PRIVATE_TYPES = ["rfi", "submittal"];
 
 // ── Helpers ──
@@ -217,7 +214,7 @@ async function handleAction(req, res, action) {
     return res.status(200).json({ ok: true, user: auth.publicUser(ctx.user), isAdmin: ctx.isAdmin, perms: ctx.perms, tools: auth.TOOLS, levels: auth.LEVELS });
   }
 
-  if (req.method !== "POST" && !["users", "people", "notifications", "shared", "pushPrefs", "projectPack"].includes(action)) throw httpError(405, "Method not allowed");
+  if (req.method !== "POST" && !["users", "people", "notifications", "shared", "pushPrefs", "projectPack", "pushTeam"].includes(action)) throw httpError(405, "Method not allowed");
 
   if (action === "setup") {
     ensure((await db.find(db.eq("Type", "user"))).length === 0, "Setup has already been completed — please sign in");
@@ -297,8 +294,12 @@ async function handleAction(req, res, action) {
   // Phone push notifications: settings, this phone on/off, test
   if (action === "pushPrefs") {
     if (req.method === "POST") return res.status(200).json({ ok: true, prefs: await push.savePrefs(ctx.user.id, b.prefs) });
-    const [prefs, devices] = await Promise.all([push.prefs(ctx.user.id), push.devices(ctx.user)]);
+    const [prefs, devices] = await Promise.all([push.prefs(ctx.user.id), push.devices(ctx.user, String(req.query.endpoint || ""))]);
     return res.status(200).json({ ok: true, publicKey: await push.publicKey(), prefs, devices, categories: push.CATEGORIES.map(([k, label, help]) => ({ k, label, help })) });
+  }
+  if (action === "pushTeam") {
+    ensure(ctx.isAdmin, "Only company admins can see this");
+    return res.status(200).json({ ok: true, team: await push.team() });
   }
   if (action === "pushSubscribe") { await push.subscribe(ctx.user, b.subscription, req.headers["user-agent"]); return res.status(200).json({ ok: true }); }
   if (action === "pushUnsubscribe") { await push.unsubscribe(ctx.user, String(b.endpoint || "")); return res.status(200).json({ ok: true }); }
@@ -309,11 +310,7 @@ async function handleAction(req, res, action) {
   // 🔔 list without the ones this person already read (read state syncs across their phone and computer)
   if (action === "projectPack") return res.status(200).json({ ok: true, ...(await projectPack(ctx, String(req.query.project || ""))) });
   if (action === "notifications") {
-    const list = await auth.cached("notify:" + ctx.user.id, 60000, async () => {
-      const [items, read] = await Promise.all([notify.forUser(ctx), db.get("nread_" + ctx.user.id)]);
-      const seen = (read && read.data.keys) || {};
-      return items.map(x => ({ ...x, key: noteKey(x) })).filter(x => !seen[x.key]);
-    });
+    const list = await auth.cached("notify:" + ctx.user.id, 60000, () => notify.unreadFor(ctx));
     return res.status(200).json({ ok: true, notifications: list });
   }
   if (action === "notificationsRead") {
@@ -438,6 +435,7 @@ export default async function handler(req, res) {
         if (!stored && TYPE_TOOL[r.type]) {
           r.data.createdById = r.data.createdById || ctx.contactId;
           r.data.createdByUserId = ctx.user.id;
+          if (!r.data.createdBy) r.data.createdBy = ctx.user.data.name;
         }
       }
       const result = await db.save(records, existing);
